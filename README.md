@@ -4,17 +4,20 @@
 This is code to transmit data using an ATtiny1614 MCU and a SX1276 RFM95W module which "fakes" the signals coming from an Ecowitt (Fine Offset) moisture sensor.
 
 **Why would you need this?**
+
 I needed a long-range, low-power (i.e. non 2.4GHz Wifi/Zigbee) way to transmit sensor data to Home Assistant.
 And I happened to already have WH51 moisture sensors and a gateway set up. These sensors use FSK modulation, and the SX1276 in the gateway can only listen either in FSK mode _or_ simple OOK/ASK mode. So it seemed easier to just quickly set something up to transmit using FSK. How naive... some problems are documented below.
 
 
 **What works**
+
 - Transmission at 868.35 MHz.
 - This shows up on my [LilyGo Lora32](https://lilygo.cc/products/lora3) (essentially an ESP32 and SX1276) running [OpenMQTTGateway](https://docs.openmqttgateway.com/), and thus also on Home Assistant.
 - Logging to the same serial port that was used for programming the ATtiny. Logging auto-disabled if no serial detected.
 - Reception of actual WH51 transmissions, including AFC to figure out the exact frequency. (Needs a bit of code hacking.)
 
 **What doesn't work (or is unknown)**
+
 - 433 MHz and 915 MHz not implemented, but should be no major problem, see below.
 - Transmission is not entirely reliable yet. The repeat burst with 30ms delay may be wrong, TX power may be too high, or the deviation may be off - TBD.
 
