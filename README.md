@@ -72,7 +72,7 @@ I used a Raspberry Pico with the [Noltari pico-uart-bridge](https://github.com/N
 
 - Raspi Pico's GPIO16 (pin 21), UART0 TX is connected to a 1 kOhm resistor.
 - Raspi Pico's GPIO17 (pin 22), UART0 RX is connected to the ATtiny UPDI (pin 10).
-- Raspi Pico's GPIO17 (pin 22), UART0 RX is additionall connected to the other end of the 1 kOhm resistor.
+- Raspi Pico's GPIO17 (pin 22), UART0 RX is additionally connected to the other end of the 1 kOhm resistor.
 - Another 470 Ohm resistor connects ATtiny UPDI (pin 10) with ATtiny PB2 (pin 7).
 
 Before you ask, I did attempt to use [Philip McGaw's diode based approach](https://philipmcgaw.com/build-a-updi-programmer-from-a-usb-to-uart-adaptor/) because it feels "cleaner" electrically, but couldn't make it work.
