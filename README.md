@@ -123,12 +123,6 @@ RegPacketConfig1 (0x30)  0x00  (fixed-length packets, no radio-level CRC - CRC i
 RegPayloadLength (0x32)  14    (NOT 0x38 in terms of register address - see below)
 ```
 
-**Register-address bug worth flagging**: `RegPayloadLength` is at address **`0x32`**.
-It is easy to find/misremember this as `0x38` (which is actually `RegTimerResol`, an unrelated
-register) - writing your payload length there silently does nothing to the real payload-length
-register, leaving it at its power-on default while your code assumes fixed-length framing is
-correctly configured.
-
 ### Modulation shaping / PA ramp (`RegPaRamp`, 0x0A)
 
 Left at power-on default: `ModulationShaping` = `00` (none/hard-keyed FSK), bits[3:0] = default
