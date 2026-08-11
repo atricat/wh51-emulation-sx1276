@@ -5,7 +5,7 @@ This is code to transmit data using an ATtiny1614 MCU and a SX1276 RFM95W module
 
 **Why would you need this?**
 
-I needed a long-range, low-power (i.e. non 2.4GHz Wifi/Zigbee) way to transmit sensor data to Home Assistant.
+I needed a long-range, low-power (i.e. non 2.4GHz Wifi/Zigbee) battery-powered way to transmit sensor data to Home Assistant.
 And I happened to already have WH51 moisture sensors and a gateway set up. These sensors use FSK modulation, and the SX1276 in the gateway can only listen either in FSK mode _or_ simple OOK/ASK mode. So it seemed easier to just quickly set something up to transmit using FSK. How naive... some problems are documented below.
 
 
@@ -14,51 +14,27 @@ And I happened to already have WH51 moisture sensors and a gateway set up. These
 - Transmission at 868.35 MHz.
 - This shows up on my [LilyGo Lora32](https://lilygo.cc/products/lora3) (essentially an ESP32 and SX1276) running [OpenMQTTGateway](https://docs.openmqttgateway.com/), and thus also on Home Assistant.
 - Logging to the same serial port that was used for programming the ATtiny. Logging auto-disabled if no serial detected.
-- Reception of actual WH51 transmissions, including AFC to figure out the exact frequency. (Needs a bit of code hacking.)
+- Reception of actual (genuine Ecowitt) WH51 transmissions, including AFC to figure out the exact frequency. (Needs a tiny bit of code hacking: Call the alternative `LoopRx()` instead of `loop()`.)
 
 **What doesn't work (or is unknown)**
 
-- 433 MHz and 915 MHz not implemented, but should be no major problem, see below.
+- 433 MHz and 915 MHz (SX1278 board) not implemented, but should be no major problem, see below.
 - Transmission is not entirely reliable yet. The repeat burst with 30ms delay may be wrong, TX power may be too high, or the deviation may be off - TBD.
-
-## Details
-
-Intended for a battery-powered sensor node (ATtiny1614 + SX1276, two reed switches, deep sleep between events)
-that transmits a packet formatted to look like a genuine **Fine Offset / Ecowitt WH51** soil
-moisture sensor, so it's picked up by existing WH51 receiver infrastructure - specifically
-**OpenMQTTGateway (OMG)** running `rtl_433_ESP` on an SX1276/SX1278-based board - without needing
-any custom receiver-side code.
-
-The TX side is fully correct at the digital/register level
-(confirmed via `PacketSent` IRQ and packet-content verification against real captured packets -
-see below). By calling the alternative `LoopRx()` instead of `loop()` you can also successfully receive
-and decode real WH51 packets from genuine sensors.
-
-Likely remaining room for improvement is with OMG's specific (and non-obvious - see below) receive architecture,
-not a bug in the packet format itself. If you pick this project up, start with the "OMG's
-receive architecture" section below before assuming the TX code needs more changes.
+- Unknown whether reception via the official Ecowitt gateway works, I do not own it.
 
 ---
 
 ## Hardware notes
 
 - MCU: ATtiny1614 (megaTinyCore / Arduino framework)
-- Radio: SX1276, SPI, 32.000 MHz crystal (confirm yours matches - the frequency math below
-  assumes exactly 32 MHz)
-- PA output: configured for **PA_BOOST** (not RFO) - see "SX1276 TX register configuration"
-  below. Most cheap SX1276 breakout boards (RFM95-style especially) only wire the antenna to
-  PA_BOOST; RFO is often not connected at all on the PCB. **Verify against your specific
-  board's schematic if reception ever fails outright** - this is easy to get backwards and
-  the digital side of the chip gives no indication that the wrong analog output pin is selected.
+- Radio: SX1276, SPI, 32.000 MHz crystal (confirm yours matches - the frequency math in the code assumes exactly 32 MHz).
+- PA output: configured for **PA_BOOST** (not RFO) - see "SX1276 TX register configuration" below. Most cheap SX1276 breakout boards (RFM95-style especially) only wire the antenna to PA_BOOST; RFO is often not connected at all on the PCB. If you are unsure about your board, first try reception only.
 - **Never transmit without an antenna (or dummy load) connected.** An open-circuit PA output
   can degrade or damage the chip over repeated/high-power transmissions.
 
-### Pin numbering gotcha (megaTinyCore / ATtiny x14-series specific)
+### Pin numbering
 
-Arduino pin numbers on this core are **not** the same as PAx/PBx port-pin numbers, and are not
-assigned sequentially around the chip (PA0 is skipped, since it's the UPDI pin, and re-appended
-at the end of the numbering instead):
-
+This is specific to the ATtiny1614 - take care to adapt as necessary for other MCUs.
 [ATtiny1614/1616/1617 Data Sheet](https://ww1.microchip.com/downloads/aemDocuments/documents/MCU08/ProductDocuments/DataSheets/ATtiny1614-16-17-DataSheet-DS40002204A.pdf) - note that physical pin numbering follows a U shape.
 
 | Physical pin | Name | Purpose |
@@ -78,23 +54,17 @@ at the end of the numbering instead):
 |      13      | PA3  | SX1276 SCK    |
 |      14      | GND  | Heh somehow it's needed |
 
+The unused pins could of course be used for more analog or digital inputs.
 
+I always use the named constants (`PIN_PA1`, `PIN_PB2`, etc.) rather than bare numbers to avoid confusion. This project got bitten by this repeatedly before switching to named constants everywhere.
 
-Always use the named constants (`PIN_PA1`, `PIN_PB2`, etc.) rather than bare numbers, or you
-will silently configure the wrong physical pin. This project got bitten by this repeatedly
-before switching to named constants everywhere.
-
-**Related, more general gotcha** that applies beyond just this MCU: raw AVR/megaAVR-0 registers
-expect different *kinds* of values depending on which register you're touching, and mixing
+Related, more general issue that applies beyond just this MCU: Raw AVR/megaAVR-0 registers expect different *kinds* of values depending on which register you're touching, and mixing
 them up compiles fine but silently does the wrong thing:
 - `DIRSET`/`DIRCLR`/`OUT.../IN`/`INTFLAGS` want a **bitmask** (`PIN1_bm`, or `digitalPinToBitMask(pin)`)
 - `PORTx.PINnCTRL` access wants a **bit position** (`digitalPinToBitPosition(pin)`)
 - Arduino API calls (`pinMode`, `digitalRead`, `digitalWrite`) want the **Arduino pin number**
 
-This project's ISR originally wrote `PORTA.INTFLAGS = REED1_PIN | REED2_PIN` using Arduino pin
-*numbers* where a *bitmask* was required - this cleared the wrong bits, leaving the real
-interrupt flag permanently set, causing an infinite interrupt-retrigger lockup the instant a
-reed switch changed state. Worth being paranoid about this distinction in any register-level AVR code.
+This project's ISR originally wrote `PORTA.INTFLAGS = REED1_PIN | REED2_PIN` using Arduino pin *numbers* where a *bitmask* was required - this cleared the wrong bits, leaving the real interrupt flag permanently set, causing an infinite interrupt-retrigger lockup the instant a reed switch changed state. Worth being paranoid about this distinction in any register-level AVR code.
 
 ### Serial/UPDI setup
 
@@ -107,20 +77,11 @@ I used a Raspberry Pico with the [Noltari pico-uart-bridge](https://github.com/N
 
 Before you ask, I did attempt to use [Philip McGaw's diode based approach](https://philipmcgaw.com/build-a-updi-programmer-from-a-usb-to-uart-adaptor/) because it feels "cleaner" electrically, but couldn't make it work.
 
-### A separate hardware quirk worth knowing: sharing a UART TX pin with UPDI during sleep
-
-If (like this project) you multiplex a debug-UART TX pin so it can also serve as the UPDI
-programming line while the MCU sleeps, **do not disable/re-enable `USART_TXEN_bm`** around the
-sleep cycle. Doing so hits a real, reproducible quirk on these parts where the transmit
-data-register-empty flag gets stuck after TXEN is toggled off and back on, silently swallowing
-the first print after wake. The pin can be fully isolated for UPDI sharing using **only**
-`PORTx.DIR` (input before sleep, output after) - the USART peripheral overrides a pin's output
-*value* but not its *direction*, so `DIR=input` alone is sufficient isolation, and leaving TXEN
-permanently enabled the whole time sidesteps the quirk entirely.
+If (like this project) you multiplex a debug-UART TX pin so it can also serve as the UPDI programming line while the MCU sleeps, **do not disable/re-enable `USART_TXEN_bm`** around the sleep cycle. Doing so hits a real, reproducible quirk on these parts where the transmit data-register-empty flag gets stuck after TXEN is toggled off and back on, silently swallowing the first print after wake. The pin can be fully isolated for UPDI sharing using only `PORTx.DIR` (input before sleep, output after) - the USART peripheral overrides a pin's output *value* but not its *direction*, so `DIR=input` alone is sufficient isolation, and leaving TXEN permanently enabled the whole time sidesteps the quirk entirely.
 
 ---
 
-## SX1276 TX register configuration (confirmed correct)
+## SX1276 TX register configuration
 
 ```
 RegOpMode      (0x01)  Standby = 0x01, TX = 0x03
@@ -135,7 +96,7 @@ RegFdevMsb/Lsb    (0x04/0x05)   ~30 kHz assumed (0x01, 0xEB) - NOT independently
                                  against the real sensor's true deviation. See "Open questions"
                                  below - this is the most likely remaining unknown.
 
-RegFrfMsb/Mid/Lsb (0x06/0x07/0x08)  See "The frequency mystery" below - true carrier measured
+RegFrfMsb/Mid/Lsb (0x06/0x07/0x08)  See frequency discussion below - true carrier measured
                                      at ~868.350 MHz, not the commonly-quoted 868.300 MHz.
                                      Frf = round(Freq_Hz * 2^19 / 32,000,000)
 
@@ -203,55 +164,30 @@ Real-world example (sensor `0f5694`):
 ```
 51 0f 56 94 0f 7f 00 f8 38 ff ff ff 6e 73
 ```
-`0x51`=family, `0f 56 94`=ID, `0x0f`=boost=0/battery=1500mV, `0x7f`=fixed, `0x00`=moisture 0%,
-`0xf8`=AD-MSB-bit=0 with fixed pattern, `0x38`=AD-LSB (AD raw=56), `ff ff ff`=fixed,
-`0x6e`=CRC8(bytes 0-11), `0x73`=checksum(bytes 0-12).
+`0x51`=family,\
+`0f 56 94`=ID,\
+`0x0f`=boost=0/battery=1500mV,\
+`0x7f`=fixed,\
+`0x00`=moisture 0%,\
+`0xf8`=AD-MSB-bit=0 with fixed pattern,\
+`0x38`=AD-LSB (AD raw=56),\
+`ff ff ff`=fixed,\
+`0x6e`=CRC8(bytes 0-11),\
+`0x73`=checksum(bytes 0-12).
 
-Both integrity algorithms, in plain form:
-```python
-def crc8(data, poly=0x31, init=0x00):
-    crc = init
-    for b in data:
-        crc ^= b
-        for _ in range(8):
-            crc = ((crc << 1) ^ poly) & 0xFF if (crc & 0x80) else (crc << 1) & 0xFF
-    return crc
-
-def checksum(data):
-    return sum(data) & 0xFF
-
-crc_byte      = crc8(payload[0:12])
-checksum_byte = checksum(payload[0:13])
-```
-
-Note that the decoder does **not** validate `moisture` or `ad_raw` against each other or
-against any expected range - those two fields can be set to whatever you want to represent
-(this project repurposes them to encode reed-switch state instead of real soil moisture).
+Note that the decoder does not validate `moisture` or `ad_raw` against each other or against any expected range - those two fields can be set to whatever you want to represent, such as reed sensors in this case.
 
 ---
 
-## Frequency questions: 868.300 vs 868.350 MHz
+## Frequency question: 868.300 vs 868.350 MHz
 
-Commonly-quoted configs for EU Fine Offset devices (including this project's own early
-attempts, and `rtl_433_ESP`'s own documented build-flag example) use **868.300 MHz**. Using an
-SX1276 configured for genuine FSK packet-mode reception (not the OOK trick described below) with
-AFC enabled, and reading back the measured frequency-offset register after real, successful
-packet captures from two different genuine WH51 units, the **true transmit carrier consistently
-measured ~868.350 MHz** - a repeatable ~50 kHz above the commonly-used 868.300 figure, not
-noise or measurement error.
-
-**Working theory for why 868.300 shows up everywhere despite not being the true carrier:**
-see the next section. If you're setting up proper FSK packet-mode reception yourself (rather
-than relying on OMG), **use 868.350 MHz**, not 868.300 - this is the empirically measured true
-carrier center via AFC against two independent real sensors, and is what this project's own
-diagnostic RX build uses successfully.
+Commonly-quoted configs for EU Fine Offset devices and `rtl_433_ESP`'s own documented build-flag example) use **868.300 MHz**. Using an SX1276 configured for genuine FSK packet-mode reception (not the OOK trick described below) with AFC enabled, and reading back the measured frequency-offset register after real, successful packet captures from two different genuine WH51 units, the true transmit carrier consistently measured ~868.350 MHz.
 
 `Frf` calculation reference:
 ```
 FSTEP = 32,000,000 Hz / 2^19 = 61.03515625 Hz
 Frf   = round(Freq_Hz / FSTEP)
 ```
-
 
 ---
 
@@ -269,12 +205,6 @@ two separate internal PA/synthesizer paths.
 | ~433 MHz | 410-525 MHz ("low frequency") | `1` | `0x09` | `0x0B` |
 | ~868/915 MHz | 862-1020 MHz ("high frequency") | `0` | `0x01` | `0x03` |
 
-Instructive note: `0x0B` is literally the value this project's TX-trigger code had by mistake
-early on, while targeting 868 MHz - it silently selected the low-frequency-band circuitry while
-the rest of the configuration assumed high-band, and turned out to be one of several compounding
-bugs behind initial "nothing gets received" problems. It would have been *correct* for a
-433 MHz design; it simply wasn't for 868/915.
-
 ### `RegFrf` values
 
 Formula: `Frf = round(Freq_Hz × 2^19 / 32,000,000)`, using a 32 MHz reference crystal (confirm
@@ -285,7 +215,7 @@ yours matches).
 | 433.920 MHz | 7,109,345 | `0x6C` | `0x7A` | `0xE1` |
 | 915.000 MHz | 14,991,360 | `0xE4` | `0xC0` | `0x00` |
 
-(868.349 MHz, this project's own working frequency, is covered above.)
+(868.350 MHz, this project's own working frequency, is covered above.)
 
 ### What does *not* need to change
 
@@ -304,19 +234,15 @@ radio-level mechanics above (Frf, LowFrequencyModeOn) carry over.
 
 ### Hardware caveat: your antenna matching network is fixed per band
 
-Register changes alone are not sufficient - most SX1276 breakout boards have their antenna
-matching network (and often the antenna itself) physically tuned for one specific band at
-manufacture time. A board built for 868/915 MHz will radiate poorly, if at all, if you simply
-reprogram it for 433 MHz - you need a module actually designed for the target band. This is
-easy to overlook since the registers will happily accept any value and `PacketSent` will still
-fire normally regardless of whether the antenna is actually resonant at that frequency (the same
-"digital success doesn't prove RF success" trap discussed elsewhere in this document).
+Register changes alone are not sufficient - most SX1276 breakout boards have their antenna matching network (and often the antenna itself) physically tuned for one specific band at manufacture time. A board built for 868/915 MHz will radiate poorly, if at all, if you simply reprogram it for 433 MHz - you need a module actually designed for the target band. The registers will happily accept any value and `PacketSent` will still fire normally regardless of whether the antenna is actually resonant at that frequency.
 
 ---
 
 ## OMG's actual receive architecture
 
-This is probably the most valuable thing in this document for anyone attempting a similar
+_This section courtesy of Claude who also helped figure out much of the above. But ChatGPT produced a similar theory._
+
+This could be useful for anyone attempting a similar
 project against OMG/`rtl_433_ESP` specifically, because it's easy to wrongly assume OMG does
 conventional FSK packet-mode reception (matching deviation/bitrate/sync-word registers the way
 this project's own RX diagnostic code does) when **it does not**.
@@ -346,12 +272,14 @@ hypothesized to approximate the real transmitter's deviation.
 
 ## Diagnostic techniques that proved valuable (reusable for similar projects)
 
-- **`RegVersion` (0x42) readback, expect `0x12`** - the standard first sanity check that SPI
+How do you figure out which parts of the setup work already, and where we are stuck?
+
+- **SPI: `RegVersion` (0x42) readback, expect `0x12`** - the standard first sanity check that SPI
   wiring/power/chip presence are all fine, before debugging anything else.
 - **SPI round-trip test**: write a test byte to an unused scratch register (e.g.
   `RegSyncValue3`, `0x2A`, if you only use a 2-byte sync word) and read it back, to confirm
   writes (not just reads) are reaching the chip.
-- **`PacketSent` polling (`RegIrqFlags2` bit 3) instead of a blind fixed TX delay** - confirms
+- **SX1276 `PacketSent` polling (`RegIrqFlags2` bit 3) instead of a blind fixed TX delay** - confirms
   the digital packet engine actually completed, and with a timeout, distinguishes "TX genuinely
   stalled" (e.g. the `RegFifoThresh` bug above) from "TX completed but nothing useful was
   radiated." **Important limitation to remember**: `PacketSent` only proves the *digital*
@@ -375,14 +303,13 @@ hypothesized to approximate the real transmitter's deviation.
 
 ---
 
-## Open questions / where to pick this up
+## Open questions
 
-1. **OMG's exact effective OOK receive parameters are not fully understood.** Read the full,
-   current `rtl_433_ESP.cpp` (not excerpts) to nail down the real default-path `RegRxBw`
+1. **OMG's exact effective OOK receive parameters are not fully understood.** Need to analyze OMG's `rtl_433_ESP.cpp` to nail down the real default-path `RegRxBw`
    equivalent, confirm which code branch (OOK vs. FSK) is actually active by default in current
    releases, and re-derive the tone-offset math from there rather than from partial/possibly
    stale code excerpts.
-2. **Deviation is still an assumption (~30 kHz), not a measured fact**, for the real WH51's TX
+2. **Deviation is still an assumption, not a measured fact**, for the real WH51's TX
    deviation specifically (as opposed to the receive-side tone-offset theory above, which is a
    different, so-far-unconfirmed number). An SDR capture of a real sensor's transmission,
    visually/numerically measuring the actual tone spacing on a spectrogram (e.g. with
