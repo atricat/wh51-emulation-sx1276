@@ -196,7 +196,10 @@ void SX1276_Init_FineOffset(void) {
   SX1276_WriteReg(REG_FIFO_THRESH, 0x80 | 0x0F);  // TxStartCondition = FifoNotEmpty
 
   // PA_BOOST selected (bit7=1), output power ≈2 + OutputPower dBm (0-15 → 2-17dBm)
-  SX1276_WriteReg(REG_PA_CONFIG, 0x8F); // ~17dBm via PA_BOOST — typical for these modules
+  // SX1276_WriteReg(REG_PA_CONFIG, 0x8F); // ~17dBm via PA_BOOST - max for these modules
+  // SX1276_WriteReg(REG_PA_CONFIG, 0x8A); // ~12dBm
+  SX1276_WriteReg(REG_PA_CONFIG, 0x85); // ~7dBm
+  // SX1276_WriteReg(REG_PA_CONFIG, 0x80); // ~2dBm
 
   // E.g. 868.300 MHz (32MHz oscillator) -> 0xE4C000
   SX1276_WriteReg(REG_FRF_MSB, SX1276_FRF_MSB);
@@ -211,9 +214,10 @@ void SX1276_Init_FineOffset(void) {
   // SX1276_WriteReg(REG_FDEV_MSB, 0x01); SX1276_WriteReg(REG_FDEV_LSB, 0x48); // Deviation = ~20 kHz
   // SX1276_WriteReg(REG_FDEV_MSB, 0x01); SX1276_WriteReg(REG_FDEV_LSB, 0x9A); // Deviation = ~25 kHz
   // SX1276_WriteReg(REG_FDEV_MSB, 0x01); SX1276_WriteReg(REG_FDEV_LSB, 0xEB); // Deviation = ~30 kHz
+  SX1276_WriteReg(REG_FDEV_MSB, 0x02); SX1276_WriteReg(REG_FDEV_LSB, 0x8F); // Deviation = ~40 kHz
   // SX1276_WriteReg(REG_FDEV_MSB, 0x03); SX1276_WriteReg(REG_FDEV_LSB, 0x23); // Deviation = ~49 kHz
   // SX1276_WriteReg(REG_FDEV_MSB, 0x03); SX1276_WriteReg(REG_FDEV_LSB, 0x85); // Deviation = ~55 kHz
-  SX1276_WriteReg(REG_FDEV_MSB, 0x03); SX1276_WriteReg(REG_FDEV_LSB, 0xA8); // Deviation = ~57 kHz
+  // SX1276_WriteReg(REG_FDEV_MSB, 0x03); SX1276_WriteReg(REG_FDEV_LSB, 0xA8); // Deviation = ~57 kHz
 
   // Preamble = 8 Bytes
   SX1276_WriteReg(REG_PREAMBLE_MSB, 0x00);
@@ -401,7 +405,8 @@ void Send_Packet(uint8_t current_reed_state) {
     SX1276_WaitForTxDone(50);
 
     // 6. Update configuration values for the next burst pass
-    standby_duration_ms = 30;  // Real WH51 uses 30, but OpenMQTTGateway requires 150ms of silence.
+    // 36 ms delay according to https://github.com/merbanan/rtl_433/issues/2955
+    standby_duration_ms = 36;
   }
 
   // Final Sequence: Lock down radio back to deep sleep mode
