@@ -35,7 +35,9 @@ And I happened to already have WH51 moisture sensors and a gateway set up. These
 ### Pin numbering
 
 This is specific to the ATtiny1614 - take care to adapt as necessary for other MCUs.
-[ATtiny1614/1616/1617 Data Sheet](https://ww1.microchip.com/downloads/aemDocuments/documents/MCU08/ProductDocuments/DataSheets/ATtiny1614-16-17-DataSheet-DS40002204A.pdf) - note that physical pin numbering follows a U shape.
+[ATtiny1614/1616/1617 Data Sheet](https://ww1.microchip.com/downloads/aemDocuments/documents/MCU08/ProductDocuments/DataSheets/ATtiny1614-16-17-DataSheet-DS40002204A.pdf).
+
+![pinout](attiny1614-pinout.png?raw=true)
 
 | Physical pin | Name | Purpose |
 |--------------|------|---------|
