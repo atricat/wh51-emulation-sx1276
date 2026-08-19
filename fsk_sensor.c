@@ -133,9 +133,6 @@ void Check_Debug_AutoDetect(void) {
   if (PORTB.IN & DEBUG_TX_PIN) {
     debug_enabled = true;
     UART_Init(9600);
-
-    // Test transmission
-    LOG("\n=== ATTINY1614 SENSOR ===\n");
     LOG("USB-serial adapter auto-detected!\n");
   } else {
     debug_enabled = false;
@@ -189,7 +186,7 @@ void SX1276_WriteReg(uint8_t addr, uint8_t value) {
 
 // --- SX1276 FSK INIT & SLEEP ---
 void SX1276_Init_FineOffset(void) {
-  LOG("[SX1276] Init FineOffset FSK %lu Hz...\n", RADIO_FREQUENCY_HZ);
+  LOG("[SX1276] Init Fine Offset FSK %lu Hz...\n", RADIO_FREQUENCY_HZ);
 
   SX1276_WriteReg(REG_OP_MODE, 0x00); // FSK Sleep Mode
 
@@ -214,7 +211,8 @@ void SX1276_Init_FineOffset(void) {
   // SX1276_WriteReg(REG_FDEV_MSB, 0x01); SX1276_WriteReg(REG_FDEV_LSB, 0x48); // Deviation = ~20 kHz
   // SX1276_WriteReg(REG_FDEV_MSB, 0x01); SX1276_WriteReg(REG_FDEV_LSB, 0x9A); // Deviation = ~25 kHz
   // SX1276_WriteReg(REG_FDEV_MSB, 0x01); SX1276_WriteReg(REG_FDEV_LSB, 0xEB); // Deviation = ~30 kHz
-  SX1276_WriteReg(REG_FDEV_MSB, 0x02); SX1276_WriteReg(REG_FDEV_LSB, 0x8F); // Deviation = ~40 kHz
+  SX1276_WriteReg(REG_FDEV_MSB, 0x02); SX1276_WriteReg(REG_FDEV_LSB, 0x3d); // Deviation = ~35 kHz
+  // SX1276_WriteReg(REG_FDEV_MSB, 0x02); SX1276_WriteReg(REG_FDEV_LSB, 0x8F); // Deviation = ~40 kHz
   // SX1276_WriteReg(REG_FDEV_MSB, 0x03); SX1276_WriteReg(REG_FDEV_LSB, 0x23); // Deviation = ~49 kHz
   // SX1276_WriteReg(REG_FDEV_MSB, 0x03); SX1276_WriteReg(REG_FDEV_LSB, 0x85); // Deviation = ~55 kHz
   // SX1276_WriteReg(REG_FDEV_MSB, 0x03); SX1276_WriteReg(REG_FDEV_LSB, 0xA8); // Deviation = ~57 kHz
@@ -230,6 +228,18 @@ void SX1276_Init_FineOffset(void) {
 
   // Packet Config: Fixed Length, No Radio CRC (we calculate it manually)
   SX1276_WriteReg(REG_PACKET_CONFIG1, 0x00);
+
+  /*static const uint16_t deviation[] = {0x00F6, 0x0148, 0x0168, 0x019A, 0x01C3, 0x01EC, 0x023D, 0x028F, 0x02E1, 0x0333};
+    SX1276_WriteReg(REG_FDEV_MSB, deviation[burst%10] >> 8); SX1276_WriteReg(REG_FDEV_LSB, deviation[burst%10] & 0xff);
+    SX1276_WriteReg(REG_PREAMBLE_LSB, 0x04*(burst/10));
+    #define REG_PA_RAMP 0x0a
+    SX1276_WriteReg(REG_PA_RAMP, 0x40);
+  */
+#define REG_PA_RAMP 0x0a
+  // SX1276_WriteReg(REG_PA_RAMP, 0x09); // No shaping
+  // SX1276_WriteReg(REG_PA_RAMP, 0x29); // Gaussian BT = 1.0
+  // SX1276_WriteReg(REG_PA_RAMP, 0x49); // Gaussian BT = 0.5
+  // SX1276_WriteReg(REG_PA_RAMP, 0x69); // Gaussian BT = 0.3
 }
 
 void SX1276_Sleep(void) {
@@ -257,7 +267,7 @@ bool SX1276_WaitForTxDone(uint16_t timeout_ms) {
       return false;
     }
   }
-  // LOG("[SX1276] PacketSent confirmed after %lums\n", millis() - start);
+  LOG("[SX1276] PacketSent confirmed after %lums\n", millis() - start);
   return true;
 }
 
@@ -327,6 +337,8 @@ static void GetDeviceID(uint8_t* out) {
 
 // --- TRANSMIT FSK PACKET ---
 void Send_Packet(uint8_t current_reed_state) {
+  // SPI_Init();
+  SX1276_CheckPresence();
   uint8_t payload[14];
 
   payload[0] = 0x51;                      // WH51 family code
@@ -348,6 +360,15 @@ void Send_Packet(uint8_t current_reed_state) {
   // Repurpose "moisture" (0-100) to carry your reed state - your call how to map it.
   // Simple example: 0 = both open, 10 = one closed, 30 = both closed.
   payload[6] = current_reed_state * 10;
+
+  static uint8_t x = 0;
+  x = (x + 1) % 100;
+  payload[6] = x;
+  if (x & 1) {
+    payload[1] = 0xd4;
+    payload[2] = 0x3c;
+    payload[3] = 0x0b;
+  }
 
   uint16_t ad_raw = 56 + 10 * current_reed_state; // no real AD value - just make something up.
   payload[7] = 0xF8 | ((ad_raw >> 8) & 0x01);
@@ -372,18 +393,11 @@ void Send_Packet(uint8_t current_reed_state) {
   uint16_t standby_duration_ms = 1;
 
   // --- BURST LOOP: Send multiple times ---
-  for (uint8_t burst = 0; burst < 2; burst++) {
+  for (uint8_t burst = 0; burst < 1; burst++) {
     // for (uint8_t burst = 0; burst < 10*4; burst++) {
 
     // 1. Force the radio into Standby mode to clear FIFO frame pointers
     SX1276_WriteReg(REG_OP_MODE, 0x01); // Standby
-
-    /*static const uint16_t deviation[] = {0x00F6, 0x0148, 0x0168, 0x019A, 0x01C3, 0x01EC, 0x023D, 0x028F, 0x02E1, 0x0333};
-      SX1276_WriteReg(REG_FDEV_MSB, deviation[burst%10] >> 8); SX1276_WriteReg(REG_FDEV_LSB, deviation[burst%10] & 0xff);
-      SX1276_WriteReg(REG_PREAMBLE_LSB, 0x04*(burst/10));
-      #define REG_PA_RAMP 0x0a
-      SX1276_WriteReg(REG_PA_RAMP, 0x40);
-    */
 
     // 2. Power-Optimized Gap/Settle Delay (1ms first loop, 30ms second loop)
     Sleep_Delay_ms(standby_duration_ms);
@@ -584,6 +598,10 @@ void setup() {
   PORTA.PIN7CTRL = PORT_ISC_INPUT_DISABLE_gc;
   PORTB.PIN0CTRL = PORT_ISC_INPUT_DISABLE_gc;
   PORTB.PIN3CTRL = PORT_ISC_INPUT_DISABLE_gc;
+
+  uint8_t device_id[3];
+  GetDeviceID(device_id);
+  LOG("Using Fine Offset device ID %02x%02x%02x\n", device_id[0], device_id[1], device_id[2]);
 
   SPI_Init();
   SX1276_CheckPresence();
