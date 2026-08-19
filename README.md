@@ -43,8 +43,8 @@ This is specific to the ATtiny1614 - take care to adapt as necessary for other M
 |--------------|------|---------|
 |       1      | VDD  | 3.3V - not 5V, the SX1276 does not like that |
 |       2      | PA4  | SX1276 NSS/CS |
-|       3      | PA5  | Reed 1 |
-|       4      | PA6  | Reed 2 |
+|       3      | PA5  | Reed 1 connected to GND |
+|       4      | PA6  | Reed 2 connected to GND |
 |       5      | PA7  | unused |
 |       6      | PB3  | unused |
 |       7      | PB2  | Serial output for log messages, see below |
@@ -77,7 +77,7 @@ I used a Raspberry Pico with the [Noltari pico-uart-bridge](https://github.com/N
 - Raspi Pico's GPIO17 (pin 22), UART0 RX is additionally connected to the other end of the 1 kOhm resistor.
 - Another 470 Ohm resistor connects ATtiny UPDI (pin 10) with ATtiny PB2 (pin 7).
 
-Before you ask, I did attempt to use [Philip McGaw's diode based approach](https://philipmcgaw.com/build-a-updi-programmer-from-a-usb-to-uart-adaptor/) because it feels "cleaner" electrically, but couldn't make it work.
+Before you ask, I did attempt to use [Philip McGaw's diode based approach](https://philipmcgaw.com/build-a-updi-programmer-from-a-usb-to-uart-adaptor/) because it feels "cleaner" electrically, but couldn't make it work with the Raspi Pico. It does work with a dedicated CP2102 based USB-to-serial adapter.
 
 If (like this project) you multiplex a debug-UART TX pin so it can also serve as the UPDI programming line while the MCU sleeps, **do not disable/re-enable `USART_TXEN_bm`** around the sleep cycle. Doing so hits a real, reproducible quirk on these parts where the transmit data-register-empty flag gets stuck after TXEN is toggled off and back on, silently swallowing the first print after wake. The pin can be fully isolated for UPDI sharing using only `PORTx.DIR` (input before sleep, output after) - the USART peripheral overrides a pin's output *value* but not its *direction*, so `DIR=input` alone is sufficient isolation, and leaving TXEN permanently enabled the whole time sidesteps the quirk entirely.
 
