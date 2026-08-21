@@ -6,7 +6,7 @@ This is code to transmit data using an ATtiny1614 MCU and a SX1276 RFM95W module
 **Why would you need this?**
 
 I needed a long-range, low-power (i.e. non 2.4GHz Wifi/Zigbee) battery-powered way to transmit sensor data to Home Assistant.
-And I happened to already have WH51 moisture sensors and a gateway set up. These sensors use FSK modulation, and the SX1276 in the gateway can only listen either in FSK mode _or_ simple OOK/ASK mode. So it seemed easier to just quickly set something up to transmit using FSK. How naive... some problems are documented below.
+And I happened to already have WH51 moisture sensors and a gateway set up. These sensors use FSK modulation, and the SX1276 in the gateway can only listen either in FSK mode _or_ simple OOK/ASK mode. So it seemed easier to just "quickly" set something up to transmit using FSK. How naive... but I eventually got it to work.
 
 
 **What works**
@@ -16,11 +16,12 @@ And I happened to already have WH51 moisture sensors and a gateway set up. These
 - Logging to the same serial port that was used for programming the ATtiny. Logging auto-disabled if no serial detected.
 - Reception of actual (genuine Ecowitt) WH51 transmissions, including AFC to figure out the exact frequency. (Needs a tiny bit of code hacking: Call the alternative `LoopRx()` instead of `loop()`.)
 
-**What doesn't work (or is unknown)**
+**Caveats**
 
-- 433 MHz and 915 MHz (SX1278 board) not implemented, but should be no major problem, see below.
+- 433 MHz and 915 MHz (SX1278 board) should work, but not tested.
 - Transmission is not entirely reliable yet. The repeat burst with 30ms delay may be wrong, TX power may be too high, or the deviation may be off - TBD.
 - Unknown whether reception via the official Ecowitt gateway works, I do not own it.
+- A [bug](https://github.com/1technophile/OpenMQTTGateway/issues/2356) in OpenMQTTGateway v1.8.1 prevented sending frequent updates, everything coming from the same device within 3 sec after an initial update was swallowed, even if the payload differed. Make sure to get a more recent version of OMG to avoid this problem.
 
 ---
 
@@ -189,48 +190,16 @@ Frf   = round(Freq_Hz / FSTEP)
 
 ## Retargeting to other ISM bands (433 MHz / 915 MHz)
 
-Everything above assumes the 868 MHz EU band. Two things need to change to move to a different
-band: the `RegFrf` value (obviously), and - easy to miss, and the source of a real bug earlier
-in this project - the `LowFrequencyModeOn` bit in `RegOpMode`, which selects between the SX1276's
-two separate internal PA/synthesizer paths.
-
-### `RegOpMode`: `LowFrequencyModeOn` (bit 3)
-
-| Band | Range | Bit 3 | `RegOpMode` Standby | `RegOpMode` TX |
-|---|---|---|---|---|
-| ~433 MHz | 410-525 MHz ("low frequency") | `1` | `0x09` | `0x0B` |
-| ~868/915 MHz | 862-1020 MHz ("high frequency") | `0` | `0x01` | `0x03` |
-
-### `RegFrf` values
-
-Formula: `Frf = round(Freq_Hz × 2^19 / 32,000,000)`, using a 32 MHz reference crystal (confirm
-yours matches).
+Likely values to use for these:
 
 | Target frequency | `Frf` (decimal) | MSB | MID | LSB |
 |---|---|---|---|---|
 | 433.920 MHz | 7,109,345 | `0x6C` | `0x7A` | `0xE1` |
 | 915.000 MHz | 14,991,360 | `0xE4` | `0xC0` | `0x00` |
 
-(868.350 MHz, this project's own working frequency, is covered above.)
+868.350 MHz, this project's own working frequency, is covered above.
 
-### What does *not* need to change
-
-Bitrate, deviation, preamble length, sync word, `RegPacketConfig1`, and `RegPayloadLength` are
-all properties of the *protocol/payload*, not the carrier frequency - they only need to change
-if you're also targeting a genuinely different device's protocol, not simply because you moved
-bands. If you're specifically trying to spoof the US-market WH51 variant (a 915 MHz variant is
-known to exist in the `rtl_433` community, alongside the EU 868 MHz one documented above), the
-same packet format documented in this file is very likely still applicable, since it's the same
-manufacturer/product family - but don't assume the bitrate/deviation are byte-identical to the
-EU variant without checking; treat it with the same "verify against real hardware, don't trust
-the first plausible number" skepticism this project needed for 868 MHz. There's no known WH51
-variant at 433 MHz - if you're retargeting there, you're almost certainly spoofing a *different*
-device's protocol, and the WH51-specific payload format in this document won't apply; only the
-radio-level mechanics above (Frf, LowFrequencyModeOn) carry over.
-
-### Hardware caveat: your antenna matching network is fixed per band
-
-Register changes alone are not sufficient - most SX1276 breakout boards have their antenna matching network (and often the antenna itself) physically tuned for one specific band at manufacture time. A board built for 868/915 MHz will radiate poorly, if at all, if you simply reprogram it for 433 MHz - you need a module actually designed for the target band. The registers will happily accept any value and `PacketSent` will still fire normally regardless of whether the antenna is actually resonant at that frequency.
+Note that register changes alone are not sufficient - most SX127x breakout boards have their antenna matching network (and also the antenna itself) physically tuned for one specific band at manufacture time. A board built for 868/915 MHz will radiate poorly, if at all, if you simply reprogram it for 433 MHz - you need a module actually designed for the target band. The registers will happily accept any value and `PacketSent` will still fire normally regardless of whether the antenna is actually resonant at that frequency.
 
 ---
 
