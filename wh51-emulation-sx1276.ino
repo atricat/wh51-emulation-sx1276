@@ -1,10 +1,10 @@
-// Use "Tools > Clock" setting:
-// #ifdef F_CPU
-// #  undef F_CPU
-// #endif
-// #define F_CPU 3333333UL // Default 20MHz / 6 clock on ATtiny1614
-// #define F_CPU 20000000UL // Default 20MHz / 6 clock on ATtiny1614
+// https://github.com/atricat/wh51-emulation-sx1276
+//
+// Emulate a WH51 moisture sensor using an ATtiny1614/ATtiny1617 and a SX1276 radio module.
+// This code transmits the state of two switches/reed contacts as a fake moisture value, but of course you could add other sensors, e.g. an actual moisture sensor.
+// In the Arduino UI, select an appropriate clock speed. 20 MHz is fine, but less to save power for a battery-powered node.
 
+#include <Arduino.h>
 #include <avr/io.h>
 #include <avr/interrupt.h>
 #include <avr/sleep.h>
@@ -13,265 +13,11 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-// --- CONFIGURATION ---
-// #define DEVICE_ID_0  0x0F   // 3-byte ID
-// #define DEVICE_ID_1  0xDE
-// #define DEVICE_ID_2  0xAD
-#define REED1_PIN PIN_PA5   // physical pin 3
-#define REED2_PIN PIN_PA6   // physical pin 4
-#define NSS_PIN   PIN4_bm   // PA4 (physical pin 2) - default SPI0 SS pin, used as manual/software CS
-#define LED_PIN PIN_PB1  // physical pin 8
-#define DEBUG_TX_PIN        PIN2_bm   // PB2 (Hardware USART0 TX default pin)
-
-// Change just this one line to retarget the frequency.
-#define RADIO_FREQUENCY_HZ   868350000UL   // measured via AFC, not assumed
-//                           MMMkkk000UL
-
-#define SX1276_FXOSC         32000000UL
-#define SX1276_FRF_STEP_DIV  524288UL   // 2^19
-
-// Frf = round(Freq_Hz * 2^19 / FXOSC), computed at compile time
-#define SX1276_FRF ((uint32_t)(((uint64_t)RADIO_FREQUENCY_HZ * SX1276_FRF_STEP_DIV \
-                                + (SX1276_FXOSC / 2)) / SX1276_FXOSC))
-
-#define SX1276_FRF_MSB  ((uint8_t)((SX1276_FRF >> 16) & 0xFF))
-#define SX1276_FRF_MID  ((uint8_t)((SX1276_FRF >> 8)  & 0xFF))
-#define SX1276_FRF_LSB  ((uint8_t)( SX1276_FRF         & 0xFF))
-
-// SX1276 FSK Registers
-#define REG_FIFO            0x00
-#define REG_OP_MODE         0x01
-#define REG_BITRATE_MSB     0x02
-#define REG_BITRATE_LSB     0x03
-#define REG_FDEV_MSB        0x04
-#define REG_FDEV_LSB        0x05
-#define REG_FRF_MSB         0x06
-#define REG_FRF_MID         0x07
-#define REG_FRF_LSB         0x08
-#define REG_PA_CONFIG       0x09
-#define REG_PREAMBLE_MSB    0x25
-#define REG_PREAMBLE_LSB    0x26
-#define REG_SYNC_CONFIG     0x27
-#define REG_SYNC_VALUE1     0x28
-#define REG_SYNC_VALUE2     0x29
-#define REG_PACKET_CONFIG1  0x30
-#define REG_PAYLOAD_LENGTH  0x32
-#define REG_FIFO_THRESH     0x35
-#define REG_IRQ_FLAGS2      0x3F
-#define IRQ2_PACKET_SENT    0x08
+#include "debug.h"
+#include "sx1276.h"
 
 #define PINCTRL_OF(p) getPINnCTRLregister(digitalPinToPortStruct(p), digitalPinToBitPosition(p))
 
-// --- GLOBAL DEBUG FLAG ---
-bool debug_enabled = false;
-
-// If debug is off, this evaluates instantly to false and skips the printf entirely.
-#define LOG(format, ...) do { \
-    if (debug_enabled) { \
-      printf(format, ##__VA_ARGS__); \
-    } \
-  } while(0)
-
-// --- UART DEBUG DRIVER (USART0 on PB2) ---
-#define USART0_BAUD_RATE(BAUD_RATE) ((float)(F_CPU * 64 / (16 * (float)BAUD_RATE)) + 0.5)
-
-// Avoids blocking on logs if nobody is listening on the UART.
-int UART_PrintChar(char c, FILE *stream) {
-  // 1. Exit immediately if debugging is disabled
-  if (!debug_enabled) return 0;
-
-  // 2. Format newlines into CRLF for standard serial monitors
-  if (c == '\n') {
-    UART_PrintChar('\r', stream);
-  }
-
-  // 3. Wait up to 20ms for hardware buffer slot to become available
-  uint32_t start_time = millis();
-  while (!(USART0.STATUS & USART_DREIF_bm)) {
-    if (millis() - start_time >= 20) {
-      // TIMEOUT: Buffer is stuck/unresponsive.
-      // Clear transmission flags to reset hardware buffer state...
-      USART0.STATUS = USART_TXCIF_bm;
-    }
-  }
-
-  // Send character
-  USART0.TXDATAL = c;
-  return 0;
-}
-
-// Set up a standard I/O stream structure assigned to our custom print function
-static FILE uart_stdout = FDEV_SETUP_STREAM(UART_PrintChar, NULL, _FDEV_SETUP_WRITE);
-
-void UART_Init(uint32_t baud) {
-  // 2. Route USART0 TX internally to PA0 (Physical Pin 7)
-  //PORTMUX.CTRLB |= PORTMUX_USART0_ALTERNATE_gc;
-
-  // 3. Set PA0 as output
-  //PORTA.DIRSET = PIN0_bm;
-  PORTB.DIRSET = DEBUG_TX_PIN; // Set PB2 as output
-
-  // 4. Calculate BAUD for 20MHz clock
-  USART0.BAUD = (uint16_t)(((float)F_CPU * 64.0) / (16.0 * (float)baud) + 0.5);
-
-  // 5. Enable TX
-  USART0.CTRLB = USART_TXEN_bm;
-
-  stdout = &uart_stdout;
-}
-
-// Single-Pin USB Auto-Detect
-void Check_Debug_AutoDetect(void) {
-  // 1. Leave PB2 as high-impedance input with internal pull-up disabled
-  PORTB.DIRCLR = DEBUG_TX_PIN;
-  PORTB.PIN2CTRL = 0x00;
-
-  // 2. Allow extra settling time for external USB Serial adapters to power up
-  _delay_ms(10);
-
-  // 3. Sample the line state: Serial RX lines sit HIGH when idle
-  if (PORTB.IN & DEBUG_TX_PIN) {
-    debug_enabled = true;
-    UART_Init(9600);
-    LOG("USB-serial adapter auto-detected!\n");
-  } else {
-    debug_enabled = false;
-    PORTB.PIN2CTRL = PORT_ISC_INPUT_DISABLE_gc;
-  }
-}
-
-// --- SPI DRIVER ---
-void SPI_Init(void) {
-  // Default SPI0 pins - no PORTMUX write needed:
-  // MOSI=PA1, MISO=PA2, SCK=PA3, SS=PA4
-  PORTA.DIRSET = PIN1_bm | PIN3_bm | NSS_PIN;  // MOSI, SCK, NSS(=PA4) as outputs
-  // PA2 (MISO) stays input - that's the power-on default, nothing to set
-  PORTA.OUTSET = NSS_PIN;                       // idle high / deselected
-
-  SPI0.CTRLA = SPI_MASTER_bm | SPI_ENABLE_bm | SPI_PRESC_DIV16_gc;
-}
-
-uint8_t SX1276_ReadReg(uint8_t addr) {
-  PORTA.OUTCLR = NSS_PIN;
-  SPI_Transfer(addr & 0x7F);   // MSB=0 selects read
-  uint8_t value = SPI_Transfer(0x00);  // dummy byte to clock out the response
-  PORTA.OUTSET = NSS_PIN;
-  return value;
-}
-
-bool SX1276_CheckPresence(void) {
-  uint8_t version = SX1276_ReadReg(0x42);  // REG_VERSION
-  LOG("[SX1276] RegVersion = 0x%02x (expect 0x12)\n", version);
-
-  const uint8_t test_pattern = 0xA5;
-  SX1276_WriteReg(0x2A, test_pattern);      // REG_SYNCVALUE3 - unused by you
-  uint8_t readback = SX1276_ReadReg(0x2A);
-  LOG("[SX1276] R/W test: Wrote 0x%02x, read back 0x%02x\n", test_pattern, readback);
-
-  return version == 0x12 && readback == test_pattern;
-}
-
-uint8_t SPI_Transfer(uint8_t data) {
-  SPI0.DATA = data;
-  while (!(SPI0.INTFLAGS & SPI_IF_bm));
-  return SPI0.DATA;
-}
-
-void SX1276_WriteReg(uint8_t addr, uint8_t value) {
-  PORTA.OUTCLR = NSS_PIN;
-  SPI_Transfer(addr | 0x80);
-  SPI_Transfer(value);
-  PORTA.OUTSET = NSS_PIN;
-}
-
-// --- SX1276 FSK INIT & SLEEP ---
-void SX1276_Init_FineOffset(void) {
-  LOG("[SX1276] Init Fine Offset FSK %lu Hz...\n", RADIO_FREQUENCY_HZ);
-
-  SX1276_WriteReg(REG_OP_MODE, 0x00); // FSK Sleep Mode
-
-  SX1276_WriteReg(REG_FIFO_THRESH, 0x80 | 0x0F);  // TxStartCondition = FifoNotEmpty
-
-  // PA_BOOST selected (bit7=1), output power ≈2 + OutputPower dBm (0-15 → 2-17dBm)
-  // SX1276_WriteReg(REG_PA_CONFIG, 0x8F); // ~17dBm via PA_BOOST - max for these modules
-  // SX1276_WriteReg(REG_PA_CONFIG, 0x8A); // ~12dBm
-  SX1276_WriteReg(REG_PA_CONFIG, 0x85); // ~7dBm
-  // SX1276_WriteReg(REG_PA_CONFIG, 0x80); // ~2dBm
-
-  // E.g. 868.300 MHz (32MHz oscillator) -> 0xE4C000
-  SX1276_WriteReg(REG_FRF_MSB, SX1276_FRF_MSB);
-  SX1276_WriteReg(REG_FRF_MID, SX1276_FRF_MID);
-  SX1276_WriteReg(REG_FRF_LSB, SX1276_FRF_LSB);
-
-  // FineOffset Bitrate = 17.241 kbps (32e6 / 17241 = 1856 = 0x0740)
-  SX1276_WriteReg(REG_BITRATE_MSB, 0x07);
-  SX1276_WriteReg(REG_BITRATE_LSB, 0x40);
-
-  // SX1276_WriteReg(REG_FDEV_MSB, 0x01); SX1276_WriteReg(REG_FDEV_LSB, 0x27); // Deviation = ~18 kHz
-  // SX1276_WriteReg(REG_FDEV_MSB, 0x01); SX1276_WriteReg(REG_FDEV_LSB, 0x48); // Deviation = ~20 kHz
-  // SX1276_WriteReg(REG_FDEV_MSB, 0x01); SX1276_WriteReg(REG_FDEV_LSB, 0x9A); // Deviation = ~25 kHz
-  // SX1276_WriteReg(REG_FDEV_MSB, 0x01); SX1276_WriteReg(REG_FDEV_LSB, 0xEB); // Deviation = ~30 kHz
-  SX1276_WriteReg(REG_FDEV_MSB, 0x02); SX1276_WriteReg(REG_FDEV_LSB, 0x3d); // Deviation = ~35 kHz
-  // SX1276_WriteReg(REG_FDEV_MSB, 0x02); SX1276_WriteReg(REG_FDEV_LSB, 0x8F); // Deviation = ~40 kHz
-  // SX1276_WriteReg(REG_FDEV_MSB, 0x03); SX1276_WriteReg(REG_FDEV_LSB, 0x23); // Deviation = ~49 kHz
-  // SX1276_WriteReg(REG_FDEV_MSB, 0x03); SX1276_WriteReg(REG_FDEV_LSB, 0x85); // Deviation = ~55 kHz
-  // SX1276_WriteReg(REG_FDEV_MSB, 0x03); SX1276_WriteReg(REG_FDEV_LSB, 0xA8); // Deviation = ~57 kHz
-
-  // Preamble = 8 Bytes
-  SX1276_WriteReg(REG_PREAMBLE_MSB, 0x00);
-  SX1276_WriteReg(REG_PREAMBLE_LSB, 0x08);
-
-  // Sync Word = 0x2D 0xD4 (FineOffset Standard)
-  SX1276_WriteReg(REG_SYNC_CONFIG, 0x11);
-  SX1276_WriteReg(REG_SYNC_VALUE1, 0x2D);
-  SX1276_WriteReg(REG_SYNC_VALUE2, 0xD4);
-
-  // Packet Config: Fixed Length, No Radio CRC (we calculate it manually)
-  SX1276_WriteReg(REG_PACKET_CONFIG1, 0x00);
-
-  /*static const uint16_t deviation[] = {0x00F6, 0x0148, 0x0168, 0x019A, 0x01C3, 0x01EC, 0x023D, 0x028F, 0x02E1, 0x0333};
-    SX1276_WriteReg(REG_FDEV_MSB, deviation[burst%10] >> 8); SX1276_WriteReg(REG_FDEV_LSB, deviation[burst%10] & 0xff);
-    SX1276_WriteReg(REG_PREAMBLE_LSB, 0x04*(burst/10));
-    #define REG_PA_RAMP 0x0a
-    SX1276_WriteReg(REG_PA_RAMP, 0x40);
-  */
-#define REG_PA_RAMP 0x0a
-  // SX1276_WriteReg(REG_PA_RAMP, 0x09); // No shaping
-  // SX1276_WriteReg(REG_PA_RAMP, 0x29); // Gaussian BT = 1.0
-  // SX1276_WriteReg(REG_PA_RAMP, 0x49); // Gaussian BT = 0.5
-  // SX1276_WriteReg(REG_PA_RAMP, 0x69); // Gaussian BT = 0.3
-}
-
-void SX1276_Sleep(void) {
-  SX1276_WriteReg(REG_OP_MODE, 0x00); // Deep Sleep (~0.2 uA)
-}
-
-// --- CRC8 CALCULATION (FineOffset Poly 0x31) ---
-uint8_t crc8(const uint8_t *data, uint8_t len) {
-  uint8_t crc = 0x00;
-  for (uint8_t i = 0; i < len; i++) {
-    crc ^= data[i];
-    for (uint8_t j = 0; j < 8; j++) {
-      if (crc & 0x80) crc = (crc << 1) ^ 0x31;
-      else crc <<= 1;
-    }
-  }
-  return crc;
-}
-
-bool SX1276_WaitForTxDone(uint16_t timeout_ms) {
-  uint32_t start = millis();
-  while (!(SX1276_ReadReg(REG_IRQ_FLAGS2) & IRQ2_PACKET_SENT)) {
-    if (millis() - start > timeout_ms) {
-      LOG("[SX1276] TX timeout - PacketSent never set!\n");
-      return false;
-    }
-  }
-  LOG("[SX1276] PacketSent confirmed after %lums\n", millis() - start);
-  return true;
-}
-
-// --- BATTERY VOLTAGE MEASUREMENT ---
 uint16_t Read_Battery_mV(void) {
   // Measure 1.1V internal ref against VDD
   VREF.CTRLA = VREF_ADC0REFSEL_1V1_gc;
@@ -287,15 +33,6 @@ uint16_t Read_Battery_mV(void) {
 
   return (uint16_t)((1126400UL) / adc_raw);
 }
-
-// Explicitly expose the core's native Arduino delay function to this C file
-#ifdef __cplusplus
-extern "C" {
-#endif
-void delay(unsigned long ms);
-#ifdef __cplusplus
-}
-#endif
 
 // Low-power sleep delay helper using IDLE mode
 void Sleep_Delay_ms(uint8_t ms) {
@@ -337,8 +74,6 @@ static void GetDeviceID(uint8_t* out) {
 
 // --- TRANSMIT FSK PACKET ---
 void Send_Packet(uint8_t current_reed_state) {
-  // SPI_Init();
-  SX1276_CheckPresence();
   uint8_t payload[14];
 
   payload[0] = 0x51;                      // WH51 family code
@@ -387,13 +122,25 @@ void Send_Packet(uint8_t current_reed_state) {
     LOG("\n");
   }
 
+  // Transmit the data.
+  SX1276_SendPacket(payload, payload+14);
+  SX1276_WaitForTxDone(50);
+
+  // Re-transmit in case the receiver didn't catch the first transmission.
+  Sleep_Delay_ms(36);
+  SX1276_SendPacket(payload, payload+14);
+  SX1276_WaitForTxDone(50);
+
+  SX1276_Sleep();
+
+/*
   SX1276_WriteReg(REG_PAYLOAD_LENGTH, 14);
 
   // Dynamic timing tracker: Initial wakeup needs 1ms, second burst loop needs 30ms
   uint16_t standby_duration_ms = 1;
 
   // --- BURST LOOP: Send multiple times ---
-  for (uint8_t burst = 0; burst < 1; burst++) {
+  for (uint8_t burst = 0; burst < 2; burst++) {
     // for (uint8_t burst = 0; burst < 10*4; burst++) {
 
     // 1. Force the radio into Standby mode to clear FIFO frame pointers
@@ -424,9 +171,10 @@ void Send_Packet(uint8_t current_reed_state) {
   }
 
   // Final Sequence: Lock down radio back to deep sleep mode
-  SX1276_Sleep();
+  SX1276_Sleep();*/
 }
 
+#if 0
 #define REG_RXCONFIG   0x0D
 #define REG_AFCBW      0x13
 #define REG_AFCMSB     0x1B
@@ -512,6 +260,7 @@ void LoopRx(void) {
     }
   }
 }
+#endif
 
 static inline uint8_t Read_Reed_State(void) {
   uint8_t state = 0;
@@ -541,7 +290,7 @@ uint8_t Debounce_Reed_State(void) {
 
 // --- INTERRUPT SERVICE ROUTINES ---
 ISR(PORTA_PORT_vect) {
-  // Just wake the CPU - all state logic lives in the main loop now.
+  // Just wake the CPU - all state logic lives in the main loop.
   PORTA.INTFLAGS = digitalPinToBitMask(REED1_PIN) | digitalPinToBitMask(REED2_PIN);
 }
 
