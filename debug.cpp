@@ -1,13 +1,12 @@
+#include <Arduino.h>
+#include <stdio.h>
+
+#include "debug.h"
+
+#include "config.h"
 
 // Global debug flag.
 bool debug_enabled = false;
-
-// If debug is off, this evaluates instantly to false and skips the printf entirely.
-#define LOG(format, ...) do { \
-    if (debug_enabled) { \
-      printf(format, ##__VA_ARGS__); \
-    } \
-  } while(0)
 
 // --- UART DEBUG DRIVER (USART0 on PB2) ---
 #define USART0_BAUD_RATE(BAUD_RATE) ((float)(F_CPU * 64 / (16 * (float)BAUD_RATE)) + 0.5)
@@ -58,13 +57,13 @@ void UART_Init(uint32_t baud) {
 }
 
 // Single-Pin USB Auto-Detect
-void Check_Debug_AutoDetect(void) {
+void Check_Debug_AutoDetect() {
   // 1. Leave PB2 as high-impedance input with internal pull-up disabled
   PORTB.DIRCLR = DEBUG_TX_PIN;
   PORTB.PIN2CTRL = 0x00;
 
   // 2. Allow extra settling time for external USB Serial adapters to power up
-  _delay_ms(10);
+  delay(10);
 
   // 3. Sample the line state: Serial RX lines sit HIGH when idle
   if (PORTB.IN & DEBUG_TX_PIN) {

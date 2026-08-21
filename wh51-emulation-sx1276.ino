@@ -9,10 +9,9 @@
 #include <avr/interrupt.h>
 #include <avr/sleep.h>
 #include <util/delay.h>
-#include <stdio.h>
 #include <stdint.h>
-#include <stdbool.h>
 
+#include "config.h"
 #include "debug.h"
 #include "sx1276.h"
 
@@ -72,6 +71,19 @@ static void GetDeviceID(uint8_t* out) {
   #endif
 }
 
+// --- CRC8 CALCULATION (FineOffset Poly 0x31) ---
+uint8_t crc8(const uint8_t *data, uint8_t len) {
+  uint8_t crc = 0x00;
+  for (uint8_t i = 0; i < len; i++) {
+    crc ^= data[i];
+    for (uint8_t j = 0; j < 8; j++) {
+      if (crc & 0x80) crc = (crc << 1) ^ 0x31;
+      else crc <<= 1;
+    }
+  }
+  return crc;
+}
+
 // --- TRANSMIT FSK PACKET ---
 void Send_Packet(uint8_t current_reed_state) {
   uint8_t payload[14];
@@ -123,6 +135,7 @@ void Send_Packet(uint8_t current_reed_state) {
   }
 
   // Transmit the data.
+  SX1276_Standby();
   SX1276_SendPacket(payload, payload+14);
   SX1276_WaitForTxDone(50);
 
@@ -131,7 +144,7 @@ void Send_Packet(uint8_t current_reed_state) {
   SX1276_SendPacket(payload, payload+14);
   SX1276_WaitForTxDone(50);
 
-  SX1276_Sleep();
+ 
 
 /*
   SX1276_WriteReg(REG_PAYLOAD_LENGTH, 14);

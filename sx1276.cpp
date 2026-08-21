@@ -1,8 +1,11 @@
+#include <Arduino.h>
+#include <avr/io.h>
 #include <util/delay.h>
+
+#include "sx1276.h"
 
 #include "config.h"
 #include "debug.h"
-#include "sx1276.h"
 
 #define SX1276_FXOSC         32000000UL
 #define SX1276_FRF_STEP_DIV  524288UL   // 2^19
@@ -61,6 +64,13 @@ uint8_t SX1276_ReadReg(uint8_t addr) {
   return value;
 }
 
+void SX1276_WriteReg(uint8_t addr, uint8_t value) {
+  PORTA.OUTCLR = NSS_PIN;
+  SPI_Transfer(addr | 0x80);
+  SPI_Transfer(value);
+  PORTA.OUTSET = NSS_PIN;
+}
+
 bool SX1276_CheckPresence() {
   uint8_t version = SX1276_ReadReg(0x42);  // REG_VERSION
   LOG("[SX1276] RegVersion = 0x%02x (expect 0x12)\n", version);
@@ -73,15 +83,8 @@ bool SX1276_CheckPresence() {
   return version == 0x12 && readback == test_pattern;
 }
 
-void SX1276_WriteReg(uint8_t addr, uint8_t value) {
-  PORTA.OUTCLR = NSS_PIN;
-  SPI_Transfer(addr | 0x80);
-  SPI_Transfer(value);
-  PORTA.OUTSET = NSS_PIN;
-}
-
 // --- SX1276 FSK INIT & SLEEP ---
-void SX1276_Init_FineOffset(void) {
+void SX1276_Init_FineOffset() {
   LOG("[SX1276] Init Fine Offset FSK %lu Hz...\n", RADIO_FREQUENCY_HZ);
 
   SX1276_WriteReg(REG_OP_MODE, 0x00); // FSK Sleep Mode
@@ -138,32 +141,20 @@ void SX1276_Init_FineOffset(void) {
   // SX1276_WriteReg(REG_PA_RAMP, 0x69); // Gaussian BT = 0.3
 }
 
-void SX1276_Sleep(void) {
+void SX1276_Sleep() {
   SX1276_WriteReg(REG_OP_MODE, 0x00); // Deep Sleep (~0.2 uA)
-}
-
-// --- CRC8 CALCULATION (FineOffset Poly 0x31) ---
-uint8_t crc8(const uint8_t *data, uint8_t len) {
-  uint8_t crc = 0x00;
-  for (uint8_t i = 0; i < len; i++) {
-    crc ^= data[i];
-    for (uint8_t j = 0; j < 8; j++) {
-      if (crc & 0x80) crc = (crc << 1) ^ 0x31;
-      else crc <<= 1;
-    }
-  }
-  return crc;
 }
 
 // Bitmask to select low-frequency (433 MHz) mode when writing to REG_OP_MODE.
 #define OP_MODE_LOW_FREQ (RADIO_FREQUENCY_HZ < 600000000UL ? 0x80 : 0x00)
 
-void SX1276_SendPacket(uint8_t* payload, uint8_t* payload_end){
-  
+void SX1276_Standby(){
     // Force the radio into Standby mode to clear FIFO frame pointers.
     SX1276_WriteReg(REG_OP_MODE, 0x01 | OP_MODE_LOW_FREQ); // Standby
+}
+
+void SX1276_SendPacket(uint8_t* payload, uint8_t* payload_end){
     uint32_t start = micros();
-    
     SX1276_WriteReg(REG_PAYLOAD_LENGTH, payload_end-payload);
     // Refill the transmission FIFO pipeline.
     PORTA.OUTCLR = NSS_PIN;
@@ -173,7 +164,7 @@ void SX1276_SendPacket(uint8_t* payload, uint8_t* payload_end){
     }
     PORTA.OUTSET = NSS_PIN;
 
-    // Crystal oscillator wake-up time is typically 250 µs.
+    // Crystal oscillator wake-up time after SX1276_Standby() is typically 250 µs.
     // It is likely that transfering the payload above will have taken that long, but still check and wait if necessary.
     while (micros() - start < 250);
     
