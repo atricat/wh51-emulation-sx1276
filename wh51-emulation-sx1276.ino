@@ -17,7 +17,7 @@
 
 #define PINCTRL_OF(p) getPINnCTRLregister(digitalPinToPortStruct(p), digitalPinToBitPosition(p))
 
-uint16_t Read_Battery_mV(void) {
+uint16_t BatteryMilliVolt(void) {
   // Measure 1.1V internal ref against VDD
   VREF.CTRLA = VREF_ADC0REFSEL_1V1_gc;
   ADC0.MUXPOS = ADC_MUXPOS_INTREF_gc;
@@ -34,7 +34,7 @@ uint16_t Read_Battery_mV(void) {
 }
 
 // Low-power sleep delay helper using IDLE mode
-void Sleep_Delay_ms(uint8_t ms) {
+void SleepMsec(uint8_t ms) {
   set_sleep_mode(SLEEP_MODE_IDLE);
   sleep_enable();
   uint32_t start_time = millis();
@@ -44,7 +44,7 @@ void Sleep_Delay_ms(uint8_t ms) {
   sleep_disable();
 }
 
-uint8_t checksum_add(const uint8_t *data, uint8_t len) {
+uint8_t ChecksumAdd(const uint8_t *data, uint8_t len) {
   uint16_t sum = 0;
   for (uint8_t i = 0; i < len; i++) sum += data[i];
   return (uint8_t)(sum & 0xFF);
@@ -52,8 +52,12 @@ uint8_t checksum_add(const uint8_t *data, uint8_t len) {
 
 // Write the last 3 bytes of the ATtiny1614 factory serial number.
 // Result is SERNUM7:SERNUM8:SERNUM9.
-static void GetDeviceID(uint8_t* out) {
-  #if defined(SIGROW)
+static void GetDeviceId(uint8_t* out) {
+  #if defined(DEVICE_ID_0) && defined(DEVICE_ID_1) && defined(DEVICE_ID_2)
+  *out++ = DEVICE_ID_0;
+  *out++ = DEVICE_ID_1;
+  *out++ = DEVICE_ID_2;
+  #elif defined(SIGROW)
   // ATtiny1614: SERNUM7..9 are signature-row offsets 0x0A..0x0C.
   *out++ = SIGROW.SERNUM7;
   *out++ = SIGROW.SERNUM8;
@@ -61,8 +65,7 @@ static void GetDeviceID(uint8_t* out) {
   #elif defined(__AVR_ATtiny1614__)
   // ATtiny1614 SIGROW is mapped at 0x1100.
   // SERNUM7/8/9 are offsets 0x0A/0x0B/0x0C.
-  volatile const uint8_t *sigrow =
-    (volatile const uint8_t *)0x1100;
+  volatile const uint8_t *sigrow = (volatile const uint8_t *)0x1100;
   *out++  = sigrow[0x0A];
   *out++  = sigrow[0x0B];
   *out++  = sigrow[0x0C];
@@ -71,8 +74,8 @@ static void GetDeviceID(uint8_t* out) {
   #endif
 }
 
-// --- CRC8 CALCULATION (FineOffset Poly 0x31) ---
-uint8_t crc8(const uint8_t *data, uint8_t len) {
+// CRC8 calculation (FineOffset Poly 0x31)
+uint8_t Crc8(const uint8_t *data, uint8_t len) {
   uint8_t crc = 0x00;
   for (uint8_t i = 0; i < len; i++) {
     crc ^= data[i];
@@ -84,63 +87,54 @@ uint8_t crc8(const uint8_t *data, uint8_t len) {
   return crc;
 }
 
-// --- TRANSMIT FSK PACKET ---
-void Send_Packet(uint8_t current_reed_state) {
+// Transmit FSK packet.
+void SendPacket(uint8_t current_reed_state) {
   uint8_t payload[14];
+  uint8_t* out = payload;
 
-  payload[0] = 0x51;                      // WH51 family code
-  GetDeviceID(payload + 1);
-  // payload[1] = DEVICE_ID_0;
-  // payload[2] = DEVICE_ID_1;
-  // payload[3] = DEVICE_ID_2;
-
+  *out++ = 0x51; // WH51 family code
+  GetDeviceId(out);
+  out += 3;
+  
   uint8_t boost = 0;                      // 0-7, real sensors set 7 on a moisture/state change
   // Fake WH51 scales the ATTiny 3.3V supply voltage to 1.5V.
-  uint16_t wh51_battery_mV = Read_Battery_mV() * 15 / 33;
+  uint16_t wh51_battery_mV = BatteryMilliVolt() * 15 / 33;
   uint8_t battery_code = (uint8_t)((wh51_battery_mV + 50) / 100);
   if (battery_code > 31)
     battery_code = 31;
-  payload[4] = (boost << 5) | battery_code;
+  *out++ = (boost << 5) | battery_code;
 
-  payload[5] = 0x7F;                      // fixed
+  *out++ = 0x7F; // fixed
 
-  // Repurpose "moisture" (0-100) to carry your reed state - your call how to map it.
-  // Simple example: 0 = both open, 10 = one closed, 30 = both closed.
-  payload[6] = current_reed_state * 10;
-
-  static uint8_t x = 0;
-  x = (x + 1) % 100;
-  payload[6] = x;
-  if (x & 1) {
-    payload[1] = 0xd4;
-    payload[2] = 0x3c;
-    payload[3] = 0x0b;
-  }
+  // Repurpose "moisture" (0-100) to carry the reed state.
+  // 0 = both open, 10 = one closed, 20 = other closed, 30 = both closed.
+  *out++ = current_reed_state * 10;
 
   uint16_t ad_raw = 56 + 10 * current_reed_state; // no real AD value - just make something up.
-  payload[7] = 0xF8 | ((ad_raw >> 8) & 0x01);
-  payload[8] = ad_raw & 0xFF;
+  *out++ = 0xF8 | ((ad_raw >> 8) & 0x01);
+  *out++ = ad_raw & 0xFF;
 
-  payload[9]  = 0xFF;
-  payload[10] = 0xFF;
-  payload[11] = 0xFF;
+  *out++  = 0xFF;
+  *out++ = 0xFF;
+  *out++ = 0xFF;
 
-  payload[12] = crc8(payload, 12);              // CRC over bytes 0-11
-  payload[13] = checksum_add(payload, 13);       // sum of bytes 0-12
+  *out++ = Crc8(payload, 12); // CRC over bytes 0-11
+  *out++ = ChecksumAdd(payload, 13); // sum of bytes 0-12
 
   if (debug_enabled) {
+    uint8_t* payload_dbg = payload;
     LOG("[TX] Payload:");
-    for (int i = 0; i < 14; i++) LOG(" %02x", payload[i]);
+    while (payload_dbg < out) LOG(" %02x", *payload_dbg++);
     LOG("\n");
   }
 
   // Transmit the data.
   SX1276_Standby();
-  SX1276_SendPacket(payload, payload+14);
+  SX1276_SendPacket(payload, out);
   SX1276_WaitForTxDone(50);
 
   // Re-transmit in case the receiver didn't catch the first transmission.
-  Sleep_Delay_ms(36);
+  SleepMsec(36);
   SX1276_SendPacket(payload, payload+14);
   SX1276_WaitForTxDone(50);
   SX1276_Sleep();
@@ -160,7 +154,7 @@ void Send_Packet(uint8_t current_reed_state) {
     SX1276_WriteReg(REG_OP_MODE, 0x01); // Standby
 
     // 2. Power-Optimized Gap/Settle Delay (1ms first loop, 30ms second loop)
-    Sleep_Delay_ms(standby_duration_ms);
+    SleepMsec(standby_duration_ms);
 
     // 3. Refill the transmission FIFO pipeline
     PORTA.OUTCLR = NSS_PIN;
@@ -175,7 +169,7 @@ void Send_Packet(uint8_t current_reed_state) {
     SX1276_WriteReg(REG_OP_MODE, 0x03); // TX
 
     // 5. Sleep the CPU for 15ms while the radio pushes the packet over the air
-    // Sleep_Delay_ms(15);
+    // SleepMsec(15);
     SX1276_WaitForTxDone(50);
 
     // 6. Update configuration values for the next burst pass
@@ -217,7 +211,7 @@ int32_t SX1276_ReadAfcOffsetHz(void) {
 
 void SX1276_EnterContinuousRx(void) {
   SX1276_WriteReg(REG_OP_MODE, 0x01); // Standby first
-  Sleep_Delay_ms(1);
+  SleepMsec(1);
   SX1276_EnableAfc();
   SX1276_WriteReg(REG_OP_MODE, 0x05); // FSK, HF band, continuous Receiver mode
   LOG("[SX1276] Listening...\n");
@@ -261,7 +255,7 @@ void LoopRx(void) {
       LOG("\n");
 
       SX1276_WriteReg(REG_OP_MODE, 0x01);
-      Sleep_Delay_ms(1);
+      SleepMsec(1);
       SX1276_WriteReg(REG_OP_MODE, 0x05);
     }
 
@@ -275,7 +269,7 @@ void LoopRx(void) {
 }
 #endif
 
-static inline uint8_t Read_Reed_State(void) {
+static inline uint8_t ReadReedState(void) {
   uint8_t state = 0;
   if (digitalRead(REED1_PIN) == LOW) state |= 0x01;
   if (digitalRead(REED2_PIN) == LOW) state |= 0x02;
@@ -286,13 +280,13 @@ static inline uint8_t Read_Reed_State(void) {
 
 // Blocks (in low-power IDLE sleep) until the reed state has been
 // unchanged for DEBOUNCE_MS straight, then returns that settled state.
-uint8_t Debounce_Reed_State(void) {
-  uint8_t last_sample = Read_Reed_State();
+uint8_t DebounceReedState(void) {
+  uint8_t last_sample = ReadReedState();
   uint32_t stable_since = millis();
 
   while ((millis() - stable_since) < DEBOUNCE_MS) {
-    Sleep_Delay_ms(1);              // low-power 1ms poll tick
-    uint8_t sample = Read_Reed_State();
+    SleepMsec(1);              // low-power 1ms poll tick
+    uint8_t sample = ReadReedState();
     if (sample != last_sample) {
       last_sample = sample;
       stable_since = millis();      // any change resets the settle timer
@@ -307,7 +301,7 @@ ISR(PORTA_PORT_vect) {
   PORTA.INTFLAGS = digitalPinToBitMask(REED1_PIN) | digitalPinToBitMask(REED2_PIN);
 }
 
-void SleepCpu_AllowUdpi() {
+void DeepSleepAllowUdpi() {
   if (!debug_enabled) {
     SLPCTRL.CTRLA = SLPCTRL_SMODE_PDOWN_gc | SLPCTRL_SEN_bm;
     sleep_cpu();
@@ -362,7 +356,7 @@ void setup() {
   PORTB.PIN3CTRL = PORT_ISC_INPUT_DISABLE_gc;
 
   uint8_t device_id[3];
-  GetDeviceID(device_id);
+  GetDeviceId(device_id);
   LOG("Using Fine Offset device ID %02x%02x%02x\n", device_id[0], device_id[1], device_id[2]);
 
   SPI_Init();
@@ -375,17 +369,17 @@ void setup() {
 void loop(void) {
   // LoopRx();
   sei();
-  uint8_t last_reported_state = Read_Reed_State();
+  uint8_t last_reported_state = ReadReedState();
 
-  while (1) {
+  while (true) {
     if (debug_enabled) _delay_ms(10); // Let UART finish printing
 
-    SleepCpu_AllowUdpi();                       // sleeps until any reed edge wakes it
-    uint8_t settled_state = Debounce_Reed_State();
+    DeepSleepAllowUdpi();                       // sleeps until any reed edge wakes it
+    uint8_t settled_state = DebounceReedState();
 
     if (settled_state != last_reported_state) {
       LOG("[WAKE] State: %02x\n", settled_state);
-      Send_Packet(settled_state);
+      SendPacket(settled_state);
       last_reported_state = settled_state;
     }
   }
