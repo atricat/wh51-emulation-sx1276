@@ -138,47 +138,6 @@ void SendPacket(uint8_t current_reed_state) {
   SX1276_SendPacket(payload, payload+14);
   SX1276_WaitForTxDone(50);
   SX1276_Sleep();
- 
-
-/*
-  SX1276_WriteReg(REG_PAYLOAD_LENGTH, 14);
-
-  // Dynamic timing tracker: Initial wakeup needs 1ms, second burst loop needs 30ms
-  uint16_t standby_duration_ms = 1;
-
-  // --- BURST LOOP: Send multiple times ---
-  for (uint8_t burst = 0; burst < 2; burst++) {
-    // for (uint8_t burst = 0; burst < 10*4; burst++) {
-
-    // 1. Force the radio into Standby mode to clear FIFO frame pointers
-    SX1276_WriteReg(REG_OP_MODE, 0x01); // Standby
-
-    // 2. Power-Optimized Gap/Settle Delay (1ms first loop, 30ms second loop)
-    SleepMsec(standby_duration_ms);
-
-    // 3. Refill the transmission FIFO pipeline
-    PORTA.OUTCLR = NSS_PIN;
-    SPI_Transfer(REG_FIFO | 0x80);
-    for (uint8_t i = 0; i < 14; i++) {
-      SPI_Transfer(payload[i]); // Pushes indexed bytes to SPI
-    }
-    PORTA.OUTSET = NSS_PIN;
-
-    // 4. Trigger FSK Transmit (Switch to TX mode)
-    // Gemini argues for 0x0b; "Gaussian Modulation Shaping: Fine Offset transmitters utilize Gaussian filtering"
-    SX1276_WriteReg(REG_OP_MODE, 0x03); // TX
-
-    // 5. Sleep the CPU for 15ms while the radio pushes the packet over the air
-    // SleepMsec(15);
-    SX1276_WaitForTxDone(50);
-
-    // 6. Update configuration values for the next burst pass
-    // 36 ms delay according to https://github.com/merbanan/rtl_433/issues/2955
-    standby_duration_ms = 36;
-  }
-
-  // Final Sequence: Lock down radio back to deep sleep mode
-  SX1276_Sleep();*/
 }
 
 #if 0
@@ -342,9 +301,6 @@ void setup() {
   pinMode(REED2_PIN, INPUT_PULLUP);
 
   Check_Debug_AutoDetect();
-
-  // Disable input buffers on unused pins to prevent leakage
-  //PORTA.PIN0CTRL = PORT_ISC_INPUT_DISABLE_gc; // UPDI - disabling breaks UPDI wake-up sequences.
 
   // Configure Reed Switches (PA1, PA2) - Active LOW, Both Edges
   *PINCTRL_OF(REED1_PIN) |= PORT_PULLUPEN_bm | PORT_ISC_BOTHEDGES_gc;
