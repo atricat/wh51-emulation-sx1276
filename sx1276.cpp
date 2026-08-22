@@ -29,15 +29,21 @@
 #define REG_FRF_MID         0x07
 #define REG_FRF_LSB         0x08
 #define REG_PA_CONFIG       0x09
+#define REG_RXCONFIG        0x0D
+#define REG_AFCBW           0x13
+#define REG_AFCMSB          0x1B
+#define REG_AFCLSB          0x1C
 #define REG_PREAMBLE_MSB    0x25
 #define REG_PREAMBLE_LSB    0x26
 #define REG_SYNC_CONFIG     0x27
 #define REG_SYNC_VALUE1     0x28
 #define REG_SYNC_VALUE2     0x29
+#define REG_SYNC_VALUE3     0x2A
 #define REG_PACKET_CONFIG1  0x30
 #define REG_PAYLOAD_LENGTH  0x32
 #define REG_FIFO_THRESH     0x35
 #define REG_IRQ_FLAGS2      0x3F
+#define REG_VERSION         0x42
 #define IRQ2_PACKET_SENT    0x08
 
 void SPI_Init() {
@@ -72,12 +78,12 @@ void SX1276_WriteReg(uint8_t addr, uint8_t value) {
 }
 
 bool SX1276_CheckPresence() {
-  uint8_t version = SX1276_ReadReg(0x42);  // REG_VERSION
+  uint8_t version = SX1276_ReadReg(REG_VERSION);
   LOG("[SX1276] RegVersion = 0x%02x (expect 0x12)\n", version);
 
   const uint8_t test_pattern = 0xA5;
-  SX1276_WriteReg(0x2A, test_pattern);      // REG_SYNCVALUE3 - unused by you
-  uint8_t readback = SX1276_ReadReg(0x2A);
+  SX1276_WriteReg(REG_SYNC_VALUE3, test_pattern);
+  uint8_t readback = SX1276_ReadReg(REG_SYNC_VALUE3);
   LOG("[SX1276] R/W test: Wrote 0x%02x, read back 0x%02x\n", test_pattern, readback);
 
   return version == 0x12 && readback == test_pattern;
@@ -184,4 +190,85 @@ bool SX1276_WaitForTxDone(uint16_t timeout_ms) {
   }
   LOG("[SX1276] PacketSent confirmed after %lums\n", millis() - start);
   return true;
+}
+
+void SX1276_EnableAfc(void) {
+  // AfcAutoOn: automatically run AFC on every new packet reception.
+  // I'm fairly confident this is bit 4 of RegRxConfig based on the
+  // standard SX1276 driver layout - worth a quick cross-check against
+  // your toolchain's header if you want to be extra sure before relying on it.
+  SX1276_WriteReg(REG_RXCONFIG, 0x1E); // AfcAutoOn=1, AgcAutoOn=1, RxTrigger=preamble+RSSI
+
+  // AFC capture bandwidth should be WIDER than your RxBw, to give AFC
+  // enough headroom to find an offset before the narrower channel filter
+  // (RxBw) locks in. Pick something like 125 kHz here.
+  SX1276_WriteReg(REG_AFCBW, 0x0A);
+}
+
+// Call this after a successful "real" packet reception to see the
+// actual measured frequency offset, in Hz.
+int32_t SX1276_ReadAfcOffsetHz(void) {
+  uint8_t msb = SX1276_ReadReg(REG_AFCMSB);
+  uint8_t lsb = SX1276_ReadReg(REG_AFCLSB);
+  int16_t raw = (int16_t)((msb << 8) | lsb); // two's complement
+  return (int32_t)raw * 61; // each LSB ≈ FSTEP (61.035 Hz)
+}
+
+void SX1276_EnterContinuousRx(void) {
+  SX1276_WriteReg(REG_OP_MODE, 0x01); // Standby first
+  delay(1);
+  SX1276_EnableAfc();
+  SX1276_WriteReg(REG_OP_MODE, 0x05); // FSK, HF band, continuous Receiver mode
+  LOG("[SX1276] Listening...\n");
+}
+
+// Diagnostic loop - replaces your normal loop() for testing.
+// No sleep, no reed switches, no TX - just dump whatever the radio hears.
+void LoopRx() {
+  sei();
+  SX1276_EnterContinuousRx();
+  SX1276_WriteReg(0x12, 0x12); // RegRxBw = 83.3 kHz - matched to your FSK signal
+
+  uint8_t last_sync_state = 0;
+  uint32_t last_heartbeat = millis();
+
+  while (1) {
+    uint8_t irq1 = SX1276_ReadReg(0x3E); // RegIrqFlags1
+    uint8_t irq2 = SX1276_ReadReg(0x3F); // RegIrqFlags2
+
+    // Sync word alone matching is a great early signal, even before
+    // a full packet completes - fires much more often than a clean decode.
+    uint8_t sync_now = irq1 & 0x01; // SyncAddressMatch
+    if (sync_now && !last_sync_state) {
+      uint8_t rssi_raw = SX1276_ReadReg(0x11); // RegRssiValue
+      LOG("[RX] Sync matched! RSSI=%d dBm\n", -(rssi_raw / 2));
+    }
+    last_sync_state = sync_now;
+
+    if (irq2 & 0x04) { // PayloadReady
+      uint8_t buf[14];
+      PORTA.OUTCLR = NSS_PIN;
+      SPI_Transfer(REG_FIFO & 0x7F);
+      for (uint8_t i = 0; i < 14; i++) buf[i] = SPI_Transfer(0x00);
+      PORTA.OUTSET = NSS_PIN;
+
+      const char* classification = buf[0] == 0x51 ? "*** REAL WH51 PACKET ***" : "(noise)";
+      uint8_t rssi_raw = SX1276_ReadReg(0x11);
+      LOG("[RX] %s RSSI=%d dBm  ID=%02x%02x%02x AFC_offset=%ld Bytes:", classification,
+          -(rssi_raw / 2), buf[1], buf[2], buf[3], SX1276_ReadAfcOffsetHz());
+      for (uint8_t i = 0; i < 14; i++) LOG(" %02x", buf[i]);
+      LOG("\n");
+
+      SX1276_WriteReg(REG_OP_MODE, 0x01);
+      delay(1);
+      SX1276_WriteReg(REG_OP_MODE, 0x05);
+    }
+
+    // Heartbeat so you know it's alive even with nothing incoming
+    if (millis() - last_heartbeat > 10000) {
+      uint8_t rssi_raw = SX1276_ReadReg(0x11);
+      LOG("[RX] alive, RSSI=%d dBm\n", -(rssi_raw / 2));
+      last_heartbeat = millis();
+    }
+  }
 }
