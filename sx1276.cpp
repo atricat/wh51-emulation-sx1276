@@ -94,8 +94,9 @@ void SX1276_Init_FineOffset() {
   // PA_BOOST selected (bit7=1), output power ≈2 + OutputPower dBm (0-15 → 2-17dBm)
   // SX1276_WriteReg(REG_PA_CONFIG, 0x8F); // ~17dBm via PA_BOOST - max for these modules
   // SX1276_WriteReg(REG_PA_CONFIG, 0x8A); // ~12dBm
-  SX1276_WriteReg(REG_PA_CONFIG, 0x85); // ~7dBm
-  // SX1276_WriteReg(REG_PA_CONFIG, 0x80); // ~2dBm
+  // SX1276_WriteReg(REG_PA_CONFIG, 0x85); // ~7dBm
+  SX1276_WriteReg(REG_PA_CONFIG, 0x80); // ~2dBm
+  // SX1276_WriteReg(REG_PA_CONFIG, 0x80 | RADIO_POWER);
 
   // E.g. 868.300 MHz (32MHz oscillator) -> 0xE4C000
   SX1276_WriteReg(REG_FRF_MSB, SX1276_FRF_MSB);

@@ -13,3 +13,9 @@
 // Change just this one line to retarget the frequency.
 #define RADIO_FREQUENCY_HZ   868350000UL   // measured via AFC, not assumed
 //                           MMMkkk000UL
+
+// Power transmission output from minimum 0 (+2 dBm) to maximum 15 (+17 dBm).
+// Lower values save power (maybe try a simple dipole instead of the coiled one).
+// Too high power close to the receiver may also overwhelm it.
+// (Not configurable: The SX1276 +20 dBm mode needs 15 here, plus RegPaDac (0x4D) set to 0x87, plus changes to RegOcp (0x0B) to raise the over-current-protection.)
+#define RADIO_POWER 0

@@ -143,7 +143,7 @@ void Send_Packet(uint8_t current_reed_state) {
   Sleep_Delay_ms(36);
   SX1276_SendPacket(payload, payload+14);
   SX1276_WaitForTxDone(50);
-
+  SX1276_Sleep();
  
 
 /*
