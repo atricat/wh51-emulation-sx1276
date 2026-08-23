@@ -8,15 +8,15 @@
 // Global debug flag.
 bool debug_enabled = false;
 
-// --- UART DEBUG DRIVER (USART0 on PB2) ---
+// USART0 on PB2
 #define USART0_BAUD_RATE(BAUD_RATE) ((float)(F_CPU * 64 / (16 * (float)BAUD_RATE)) + 0.5)
 
 // Avoids blocking on logs if nobody is listening on the UART.
 int UART_PrintChar(char c, FILE *stream) {
-  // 1. Exit immediately if debugging is disabled
+  // Exit immediately if debugging is disabled
   if (!debug_enabled) return 0;
 
-  // 2. Format newlines into CRLF for standard serial monitors
+  // Format newlines into CRLF for standard serial monitors
   if (c == '\n') {
     UART_PrintChar('\r', stream);
   }
@@ -40,17 +40,15 @@ int UART_PrintChar(char c, FILE *stream) {
 static FILE uart_stdout = FDEV_SETUP_STREAM(UART_PrintChar, NULL, _FDEV_SETUP_WRITE);
 
 void UART_Init(uint32_t baud) {
-  // 2. Route USART0 TX internally to PA0 (Physical Pin 7)
+  // Route USART0 TX internally to PA0 (Physical Pin 7)
   //PORTMUX.CTRLB |= PORTMUX_USART0_ALTERNATE_gc;
 
-  // 3. Set PA0 as output
-  //PORTA.DIRSET = PIN0_bm;
   PORTB.DIRSET = DEBUG_TX_PIN; // Set PB2 as output
 
-  // 4. Calculate BAUD for 20MHz clock
+  // Calculate BAUD depending on CPU speed.
   USART0.BAUD = (uint16_t)(((float)F_CPU * 64.0) / (16.0 * (float)baud) + 0.5);
 
-  // 5. Enable TX
+  // Enable TX
   USART0.CTRLB = USART_TXEN_bm;
 
   stdout = &uart_stdout;
@@ -58,14 +56,14 @@ void UART_Init(uint32_t baud) {
 
 // Single-Pin USB Auto-Detect
 void Check_Debug_AutoDetect() {
-  // 1. Leave PB2 as high-impedance input with internal pull-up disabled
+  // Leave PB2 as high-impedance input with internal pull-up disabled
   PORTB.DIRCLR = DEBUG_TX_PIN;
   PORTB.PIN2CTRL = 0x00;
 
-  // 2. Allow extra settling time for external USB Serial adapters to power up
+  // Extra settling time for external USB Serial adapters to power up
   delay(10);
 
-  // 3. Sample the line state: Serial RX lines sit HIGH when idle
+  // Sample the line state: Serial RX lines sit HIGH when idle.
   if (PORTB.IN & DEBUG_TX_PIN) {
     debug_enabled = true;
     UART_Init(9600);
