@@ -17,6 +17,14 @@
 
 #define PINCTRL_OF(p) getPINnCTRLregister(digitalPinToPortStruct(p), digitalPinToBitPosition(p))
 
+// In debug mode, the LED is always on and goes off during activity only, reversed from normal operation.
+void Active() {
+  digitalWrite(LED_PIN, debug_enabled ? LOW : HIGH);
+}
+void Inactive() {
+  digitalWrite(LED_PIN, debug_enabled ? HIGH : LOW);
+}
+
 uint16_t BatteryMilliVolt(void) {
   // Measure 1.1V internal ref against VDD
   VREF.CTRLA = VREF_ADC0REFSEL_1V1_gc;
@@ -34,7 +42,8 @@ uint16_t BatteryMilliVolt(void) {
 }
 
 // Low-power sleep delay helper using IDLE mode
-void SleepMsec(uint8_t ms) {
+void SleepMsec(uint16_t ms) {
+  Inactive();
   set_sleep_mode(SLEEP_MODE_IDLE);
   sleep_enable();
   uint32_t start_time = millis();
@@ -42,6 +51,42 @@ void SleepMsec(uint8_t ms) {
     sleep_cpu(); // Halts CPU clock; background millis timer ISR wakes it every 1ms
   }
   sleep_disable();
+  Active();
+}
+
+// Deep sleep, also stops millis().
+void DeepSleepAllowUdpi() {
+  Inactive();
+  if (!debug_enabled) {
+    SLPCTRL.CTRLA = SLPCTRL_SMODE_PDOWN_gc | SLPCTRL_SEN_bm;
+    sleep_cpu();
+    SLPCTRL.CTRLA &= ~SLPCTRL_SEN_bm;
+    Active();
+    return;
+  }
+
+  LOG("[DEEP SLEEP]\n");
+  uint16_t timeout = 20000; // ~200ms — plenty even for long lines at low baud, still a rare one-off cost
+  while (!(USART0.STATUS & USART_TXCIF_bm) && --timeout) {
+    _delay_us(10);
+  }
+  USART0.STATUS = USART_TXCIF_bm;
+
+  // Prepare for sleep. Do NOT touch TXEN, leave it enabled to avoid wakeup UART problem.
+  // Actually don't do this, causes the serial-to-USB to drop last characters. We will assume that
+  // enabled debug logging means we do not need to save power.
+  _delay_ms(4); // let the line sit idle-high before releasing the pin
+  PORTB.DIRCLR = DEBUG_TX_PIN;
+  PORTB.PIN2CTRL = 0;
+
+  SLPCTRL.CTRLA = SLPCTRL_SMODE_PDOWN_gc | SLPCTRL_SEN_bm;
+  sleep_cpu();
+  SLPCTRL.CTRLA &= ~SLPCTRL_SEN_bm;
+
+  // Post-wakeup init and UPDI halt window.
+  delay(10);
+  PORTB.DIRSET = DEBUG_TX_PIN; // TXEN was never disabled - nothing else to restore
+  Active();
 }
 
 uint8_t ChecksumAdd(const uint8_t *data, uint8_t len) {
@@ -147,8 +192,6 @@ static inline uint8_t ReadReedState(void) {
   return state;
 }
 
-#define DEBOUNCE_MS 10   // tune to your reed switch's real bounce time
-
 // Blocks (in low-power IDLE sleep) until the reed state has been
 // unchanged for DEBOUNCE_MS straight, then returns that settled state.
 uint8_t DebounceReedState() {
@@ -170,37 +213,6 @@ uint8_t DebounceReedState() {
 ISR(PORTA_PORT_vect) {
   // Just wake the CPU - all state logic lives in the main loop.
   PORTA.INTFLAGS = digitalPinToBitMask(REED1_PIN) | digitalPinToBitMask(REED2_PIN);
-}
-
-void DeepSleepAllowUdpi() {
-  if (!debug_enabled) {
-    digitalWrite(LED_PIN, LOW);
-    SLPCTRL.CTRLA = SLPCTRL_SMODE_PDOWN_gc | SLPCTRL_SEN_bm;
-    sleep_cpu();
-    SLPCTRL.CTRLA &= ~SLPCTRL_SEN_bm;
-    digitalWrite(LED_PIN, HIGH);
-    return;
-  }
-
-  uint16_t timeout = 1000;
-  while (!(USART0.STATUS & USART_TXCIF_bm) && --timeout) {
-    _delay_us(10);
-  }
-  USART0.STATUS = USART_TXCIF_bm;
-
-  // Prepare for sleep. Do NOT touch TXEN, leave it enabled to avoid wakeup UART problem.
-  PORTB.DIRCLR = DEBUG_TX_PIN;
-  PORTB.PIN2CTRL = 0;
-
-  digitalWrite(LED_PIN, HIGH);
-  SLPCTRL.CTRLA = SLPCTRL_SMODE_PDOWN_gc | SLPCTRL_SEN_bm;
-  sleep_cpu();
-  SLPCTRL.CTRLA &= ~SLPCTRL_SEN_bm;
-  digitalWrite(LED_PIN, LOW);
-
-  // Post-wakeup init and UPDI halt window.
-  delay(10);
-  PORTB.DIRSET = DEBUG_TX_PIN; // TXEN was never disabled - nothing else to restore
 }
 
 void setup() {
@@ -246,6 +258,7 @@ void loop(void) {
     } else {
       LOG("[WAKE] State: %02x\n", settled_state);
       SendPacket(settled_state);
+      SleepMsec(MIN_UPDATE_DELAY_MS);
       last_reported_state = settled_state;
     }
   }
