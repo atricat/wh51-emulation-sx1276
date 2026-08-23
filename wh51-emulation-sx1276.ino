@@ -95,7 +95,7 @@ void SendPacket(uint8_t current_reed_state) {
   *out++ = 0x51; // WH51 family code
   GetDeviceId(out);
   out += 3;
-  
+
   uint8_t boost = 0;                      // 0-7, real sensors set 7 on a moisture/state change
   // Fake WH51 scales the ATTiny 3.3V supply voltage to 1.5V.
   uint16_t wh51_battery_mV = BatteryMilliVolt() * 15 / 33;
@@ -107,14 +107,14 @@ void SendPacket(uint8_t current_reed_state) {
   *out++ = 0x7F; // fixed
 
   // Repurpose "moisture" (0-100) to carry the reed state.
-  // 0 = both open, 10 = one closed, 20 = other closed, 30 = both closed.
-  *out++ = current_reed_state * 10;
+  // 0 = both open, 1 = one closed, 2 = other closed, 3 = both closed.
+  *out++ = current_reed_state;
 
   uint16_t ad_raw = 56 + 10 * current_reed_state; // no real AD value - just make something up.
   *out++ = 0xF8 | ((ad_raw >> 8) & 0x01);
   *out++ = ad_raw & 0xFF;
 
-  *out++  = 0xFF;
+  *out++ = 0xFF;
   *out++ = 0xFF;
   *out++ = 0xFF;
 
@@ -135,7 +135,7 @@ void SendPacket(uint8_t current_reed_state) {
 
   // Re-transmit in case the receiver didn't catch the first transmission.
   SleepMsec(36);
-  SX1276_SendPacket(payload, payload+14);
+  SX1276_SendPacket(payload, out);
   SX1276_WaitForTxDone(50);
   SX1276_Sleep();
 }
@@ -151,22 +151,22 @@ static inline uint8_t ReadReedState(void) {
 
 // Blocks (in low-power IDLE sleep) until the reed state has been
 // unchanged for DEBOUNCE_MS straight, then returns that settled state.
-uint8_t DebounceReedState(void) {
+uint8_t DebounceReedState() {
   uint8_t last_sample = ReadReedState();
   uint32_t stable_since = millis();
 
   while ((millis() - stable_since) < DEBOUNCE_MS) {
-    SleepMsec(1);              // low-power 1ms poll tick
+    SleepMsec(1); // low-power 1ms poll tick
     uint8_t sample = ReadReedState();
     if (sample != last_sample) {
       last_sample = sample;
-      stable_since = millis();      // any change resets the settle timer
+      stable_since = millis();
     }
   }
   return last_sample;
 }
 
-// --- INTERRUPT SERVICE ROUTINES ---
+// Interrupt service routine.
 ISR(PORTA_PORT_vect) {
   // Just wake the CPU - all state logic lives in the main loop.
   PORTA.INTFLAGS = digitalPinToBitMask(REED1_PIN) | digitalPinToBitMask(REED2_PIN);
@@ -174,9 +174,11 @@ ISR(PORTA_PORT_vect) {
 
 void DeepSleepAllowUdpi() {
   if (!debug_enabled) {
+    digitalWrite(LED_PIN, LOW);
     SLPCTRL.CTRLA = SLPCTRL_SMODE_PDOWN_gc | SLPCTRL_SEN_bm;
     sleep_cpu();
     SLPCTRL.CTRLA &= ~SLPCTRL_SEN_bm;
+    digitalWrite(LED_PIN, HIGH);
     return;
   }
 
@@ -186,27 +188,25 @@ void DeepSleepAllowUdpi() {
   }
   USART0.STATUS = USART_TXCIF_bm;
 
-  // --- 2. PRE-SLEEP HARDWARE ISOLATION ---
-  // Just release direction - do NOT touch TXEN (errata: leave it enabled)
+  // Prepare for sleep. Do NOT touch TXEN, leave it enabled to avoid wakeup UART problem.
   PORTB.DIRCLR = DEBUG_TX_PIN;
   PORTB.PIN2CTRL = 0;
 
-  // --- 3. THE DEEP SLEEP EXECUTION ---
   digitalWrite(LED_PIN, HIGH);
   SLPCTRL.CTRLA = SLPCTRL_SMODE_PDOWN_gc | SLPCTRL_SEN_bm;
   sleep_cpu();
   SLPCTRL.CTRLA &= ~SLPCTRL_SEN_bm;
   digitalWrite(LED_PIN, LOW);
 
-  // --- 4. POST-WAKEUP RE-INITIALIZATION & UPDI HALT WINDOW ---
+  // Post-wakeup init and UPDI halt window.
   delay(10);
-  PORTB.DIRSET = DEBUG_TX_PIN;   // TXEN was never disabled - nothing else to restore
+  PORTB.DIRSET = DEBUG_TX_PIN; // TXEN was never disabled - nothing else to restore
 }
 
 void setup() {
   pinMode(LED_PIN, OUTPUT);
   digitalWrite(LED_PIN, HIGH);
-  delay(3000);
+  delay(3000); //
   digitalWrite(LED_PIN, LOW);
   delay(100);
   pinMode(REED1_PIN, INPUT_PULLUP);
@@ -233,19 +233,17 @@ void setup() {
   SX1276_Sleep();
 }
 
-// --- MAIN LOOP ---
 void loop(void) {
   // LoopRx();
   sei();
-  uint8_t last_reported_state = ReadReedState();
+  uint8_t last_reported_state = 0xff; // Always send state on startup.
 
   while (true) {
-    if (debug_enabled) _delay_ms(10); // Let UART finish printing
-
-    DeepSleepAllowUdpi();                       // sleeps until any reed edge wakes it
     uint8_t settled_state = DebounceReedState();
-
-    if (settled_state != last_reported_state) {
+    if (settled_state == last_reported_state) {
+      if (debug_enabled) _delay_ms(10); // Let UART finish printing
+      DeepSleepAllowUdpi(); // Sleeps until any reed edge wakes it
+    } else {
       LOG("[WAKE] State: %02x\n", settled_state);
       SendPacket(settled_state);
       last_reported_state = settled_state;

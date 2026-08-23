@@ -14,11 +14,11 @@
 #define SX1276_FRF ((uint32_t)(((uint64_t)RADIO_FREQUENCY_HZ * SX1276_FRF_STEP_DIV \
                                 + (SX1276_FXOSC / 2)) / SX1276_FXOSC))
 
-#define SX1276_FRF_MSB  ((uint8_t)((SX1276_FRF >> 16) & 0xFF))
-#define SX1276_FRF_MID  ((uint8_t)((SX1276_FRF >> 8)  & 0xFF))
-#define SX1276_FRF_LSB  ((uint8_t)( SX1276_FRF         & 0xFF))
+#define SX1276_FRF_MSB ((uint8_t)((SX1276_FRF >> 16) & 0xFF))
+#define SX1276_FRF_MID ((uint8_t)((SX1276_FRF >> 8)  & 0xFF))
+#define SX1276_FRF_LSB ((uint8_t)( SX1276_FRF        & 0xFF))
 
-// SX1276 FSK Registers
+// SX1276 registers
 #define REG_FIFO            0x00
 #define REG_OP_MODE         0x01
 #define REG_BITRATE_MSB     0x02
