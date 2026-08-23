@@ -211,13 +211,14 @@ int32_t SX1276_ReadAfcOffsetHz(void) {
   uint8_t msb = SX1276_ReadReg(REG_AFCMSB);
   uint8_t lsb = SX1276_ReadReg(REG_AFCLSB);
   int16_t raw = (int16_t)((msb << 8) | lsb); // two's complement
-  return (int32_t)raw * 61; // each LSB ≈ FSTEP (61.035 Hz)
+  return (int32_t)(((int64_t)raw * 61035) / 1000); // 61.035 Hz/LSB (actually 32 MHz/2^19), no overflow
 }
 
 void SX1276_EnterContinuousRx(void) {
   SX1276_WriteReg(REG_OP_MODE, 0x01); // Standby first
   delay(1);
   SX1276_EnableAfc();
+  SX1276_WriteReg(0x12, 0x12); // RegRxBw = 83.3 kHz - matched to your FSK signal
   SX1276_WriteReg(REG_OP_MODE, 0x05); // FSK, HF band, continuous Receiver mode
   LOG("[SX1276] Listening...\n");
 }
@@ -227,7 +228,6 @@ void SX1276_EnterContinuousRx(void) {
 void LoopRx() {
   sei();
   SX1276_EnterContinuousRx();
-  SX1276_WriteReg(0x12, 0x12); // RegRxBw = 83.3 kHz - matched to your FSK signal
 
   uint8_t last_sync_state = 0;
   uint32_t last_heartbeat = millis();
@@ -252,12 +252,12 @@ void LoopRx() {
       for (uint8_t i = 0; i < 14; i++) buf[i] = SPI_Transfer(0x00);
       PORTA.OUTSET = NSS_PIN;
 
-      const char* classification = buf[0] == 0x51 ? "*** REAL WH51 PACKET ***" : "(noise)";
+      const char* classification = buf[0] == 0x51 ? "REAL WH51 PACKET:" : "Noise? ";
       uint8_t rssi_raw = SX1276_ReadReg(0x11);
-      LOG("[RX] %s RSSI=%d dBm  ID=%02x%02x%02x AFC_offset=%ld Bytes:", classification,
-          -(rssi_raw / 2), buf[1], buf[2], buf[3], SX1276_ReadAfcOffsetHz());
+      LOG("[RX] %s RSSI=%d dBm, ID=%02x%02x%02x, AFC_measured_freq=%ld Hz, data=[", classification,
+          -(rssi_raw / 2), buf[1], buf[2], buf[3], RADIO_FREQUENCY_HZ + SX1276_ReadAfcOffsetHz());
       for (uint8_t i = 0; i < 14; i++) LOG(" %02x", buf[i]);
-      LOG("\n");
+      LOG("]\n");
 
       SX1276_WriteReg(REG_OP_MODE, 0x01);
       delay(1);

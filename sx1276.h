@@ -8,5 +8,5 @@ void SX1276_SendPacket(uint8_t* payload, uint8_t* payload_end);
 bool SX1276_WaitForTxDone(uint16_t timeout_ms);
 void SX1276_Sleep();
 // Diagnostic loop - replaces your normal loop() for testing.
-// No sleep, no reed switches, no TX - just dump whatever the radio hears.
+// No sleep, no reed switches, no TX - just dumps what the radio hears.
 void LoopRx();

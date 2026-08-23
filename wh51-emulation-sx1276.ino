@@ -234,7 +234,7 @@ void setup() {
 }
 
 void loop(void) {
-  // LoopRx();
+  // LoopRx(); // Uncomment to listen to genuine WH51 sensors.
   sei();
   uint8_t last_reported_state = 0xff; // Always send state on startup.
 
