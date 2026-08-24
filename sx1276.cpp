@@ -97,12 +97,7 @@ void SX1276_Init_FineOffset() {
 
   SX1276_WriteReg(REG_FIFO_THRESH, 0x80 | 0x0F);  // TxStartCondition = FifoNotEmpty
 
-  // PA_BOOST selected (bit7=1), output power ≈2 + OutputPower dBm (0-15 → 2-17dBm)
-  // SX1276_WriteReg(REG_PA_CONFIG, 0x8F); // ~17dBm via PA_BOOST - max for these modules
-  // SX1276_WriteReg(REG_PA_CONFIG, 0x8A); // ~12dBm
-  // SX1276_WriteReg(REG_PA_CONFIG, 0x85); // ~7dBm
-  SX1276_WriteReg(REG_PA_CONFIG, 0x80); // ~2dBm
-  // SX1276_WriteReg(REG_PA_CONFIG, 0x80 | RADIO_POWER);
+  SX1276_WriteReg(REG_PA_CONFIG, 0x80 | RADIO_POWER);
 
   // E.g. 868.300 MHz (32MHz oscillator) -> 0xE4C000
   SX1276_WriteReg(REG_FRF_MSB, SX1276_FRF_MSB);
@@ -113,15 +108,7 @@ void SX1276_Init_FineOffset() {
   SX1276_WriteReg(REG_BITRATE_MSB, 0x07);
   SX1276_WriteReg(REG_BITRATE_LSB, 0x40);
 
-  // SX1276_WriteReg(REG_FDEV_MSB, 0x01); SX1276_WriteReg(REG_FDEV_LSB, 0x27); // Deviation = ~18 kHz
-  // SX1276_WriteReg(REG_FDEV_MSB, 0x01); SX1276_WriteReg(REG_FDEV_LSB, 0x48); // Deviation = ~20 kHz
-  // SX1276_WriteReg(REG_FDEV_MSB, 0x01); SX1276_WriteReg(REG_FDEV_LSB, 0x9A); // Deviation = ~25 kHz
-  // SX1276_WriteReg(REG_FDEV_MSB, 0x01); SX1276_WriteReg(REG_FDEV_LSB, 0xEB); // Deviation = ~30 kHz
   SX1276_WriteReg(REG_FDEV_MSB, 0x02); SX1276_WriteReg(REG_FDEV_LSB, 0x3d); // Deviation = ~35 kHz
-  // SX1276_WriteReg(REG_FDEV_MSB, 0x02); SX1276_WriteReg(REG_FDEV_LSB, 0x8F); // Deviation = ~40 kHz
-  // SX1276_WriteReg(REG_FDEV_MSB, 0x03); SX1276_WriteReg(REG_FDEV_LSB, 0x23); // Deviation = ~49 kHz
-  // SX1276_WriteReg(REG_FDEV_MSB, 0x03); SX1276_WriteReg(REG_FDEV_LSB, 0x85); // Deviation = ~55 kHz
-  // SX1276_WriteReg(REG_FDEV_MSB, 0x03); SX1276_WriteReg(REG_FDEV_LSB, 0xA8); // Deviation = ~57 kHz
 
   // Preamble = 8 Bytes
   SX1276_WriteReg(REG_PREAMBLE_MSB, 0x00);
@@ -134,18 +121,6 @@ void SX1276_Init_FineOffset() {
 
   // Packet Config: Fixed Length, No Radio CRC (we calculate it manually)
   SX1276_WriteReg(REG_PACKET_CONFIG1, 0x00);
-
-  /*static const uint16_t deviation[] = {0x00F6, 0x0148, 0x0168, 0x019A, 0x01C3, 0x01EC, 0x023D, 0x028F, 0x02E1, 0x0333};
-    SX1276_WriteReg(REG_FDEV_MSB, deviation[burst%10] >> 8); SX1276_WriteReg(REG_FDEV_LSB, deviation[burst%10] & 0xff);
-    SX1276_WriteReg(REG_PREAMBLE_LSB, 0x04*(burst/10));
-    #define REG_PA_RAMP 0x0a
-    SX1276_WriteReg(REG_PA_RAMP, 0x40);
-  */
-#define REG_PA_RAMP 0x0a
-  // SX1276_WriteReg(REG_PA_RAMP, 0x09); // No shaping
-  // SX1276_WriteReg(REG_PA_RAMP, 0x29); // Gaussian BT = 1.0
-  // SX1276_WriteReg(REG_PA_RAMP, 0x49); // Gaussian BT = 0.5
-  // SX1276_WriteReg(REG_PA_RAMP, 0x69); // Gaussian BT = 0.3
 }
 
 void SX1276_Sleep() {
@@ -176,7 +151,8 @@ void SX1276_SendPacket(uint8_t* payload, uint8_t* payload_end){
     while (micros() - start < 250);
     
     // Trigger FSK Transmit, switch to TX mode.
-    // Gemini argues for 0x0b; "Gaussian Modulation Shaping: Fine Offset transmitters utilize Gaussian filtering"
+    // Gemini argues for 0x0b; "Gaussian Modulation Shaping: Fine Offset transmitters utilize Gaussian filtering".
+    // But Gemini is the weirdest of the bunch, let's just ignore it. :P
     SX1276_WriteReg(REG_OP_MODE, 0x03 | OP_MODE_LOW_FREQ); // TX
 }
 
