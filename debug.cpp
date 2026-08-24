@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include <stdio.h>
+#include <util/delay.h>
 
 #include "debug.h"
 
@@ -55,21 +56,35 @@ void UART_Init(uint32_t baud) {
 }
 
 // Single-Pin USB Auto-Detect
-void Check_Debug_AutoDetect() {
-  // Leave PB2 as high-impedance input with internal pull-up disabled
+void EnableDebugOnSerialInput(uint16_t max_delay_ms) {
   PORTB.DIRCLR = DEBUG_TX_PIN;
-  PORTB.PIN2CTRL = 0x00;
-
-  // Extra settling time for external USB Serial adapters to power up
-  delay(10);
-
-  // Sample the line state: Serial RX lines sit HIGH when idle.
-  if (PORTB.IN & DEBUG_TX_PIN) {
-    debug_enabled = true;
-    UART_Init(9600);
-    LOG("USB-serial adapter auto-detected!\n");
-  } else {
-    debug_enabled = false;
-    PORTB.PIN2CTRL = PORT_ISC_INPUT_DISABLE_gc;
+  PORTB.PIN2CTRL = PORT_PULLUPEN_bm; // deterministic idle-HIGH baseline
+  uint32_t start_time = millis();
+  while (millis() - start_time < max_delay_ms) {
+    if (!(PORTB.IN & DEBUG_TX_PIN)) {
+      // delay(200);
+      debug_enabled = true;
+      // Wait for the pin to be idle for 100 ms, i.e. until any incoming keypress has been
+      // transmitted and will not interfere with us outputting the first log message.
+      uint32_t last_change = millis();
+      bool last_state = PORTB.IN & DEBUG_TX_PIN;
+      while (millis() - last_change < 100) {
+        bool current_state = PORTB.IN & DEBUG_TX_PIN;
+        if (current_state != last_state) {
+          last_change = millis();
+          last_state = current_state;
+        }
+      }
+      UART_Init(9600);
+      LOG("GPIO pin pulled low - serial logging enabled!\n");
+      return;
+    }
+    _delay_us(10);
   }
+  debug_enabled = false;
+  // Disable GPIO since we are not using it for debug output.
+  #if DEBUG_TX_PIN != PIN2_bm
+  #error "Adapt the line below to the changed DEBUG_TX_PIN"
+  PORTB.PIN2CTRL = PORT_ISC_INPUT_DISABLE_gc;
+  #endif
 }

@@ -11,17 +11,17 @@ And I happened to already have WH51 moisture sensors and a gateway set up. These
 
 **What works**
 
-- Transmission at 868.35 MHz.
+- Transmission at 868.35 MHz. The deviation of 35 kHz was measured with an SDR.
 - This shows up on my [LilyGo Lora32](https://lilygo.cc/products/lora3) (essentially an ESP32 and SX1276) running [OpenMQTTGateway](https://docs.openmqttgateway.com/), and thus also on Home Assistant.
-- Logging to the same serial port that was used for programming the ATtiny. Logging auto-disabled if no serial detected.
+- Logging to the same serial port that was used for programming the ATtiny. To enable logging, you need to press a key (e.g. Enter) during the first 3 seconds of startup, while the LED is still on.
 - Reception of actual (genuine Ecowitt) WH51 transmissions, including AFC to figure out the exact frequency. (Needs a tiny bit of code hacking: Call the alternative `LoopRx()` instead of `loop()`.)
 
 **Caveats**
 
 - 433 MHz and 915 MHz (SX1278 board) should work, but not tested.
-- Transmission is not entirely reliable yet. The repeat burst with 30ms delay may be wrong, TX power may be too high, or the deviation may be off - TBD.
+- The repeat burst separation of 36 ms may differ from the original.
 - Unknown whether reception via the official Ecowitt gateway works, I do not own it.
-- A [bug](https://github.com/1technophile/OpenMQTTGateway/issues/2356) in OpenMQTTGateway v1.8.1 prevented sending frequent updates, everything coming from the same device within 3 sec after an initial update was swallowed, even if the payload differed. Make sure to get a more recent version of OMG to avoid this problem.
+- A [bug](https://github.com/1technophile/OpenMQTTGateway/issues/2356) in OpenMQTTGateway v1.8.1 prevented sending frequent updates, everything coming from the same device within 3 sec after an initial update was swallowed, even if the payload differed. Preferably, get a more recent version of OMG to avoid this problem. In the code, `MIN_UPDATE_DELAY_MS` set to 3100 ms provides a workaround, it causes updates to get delayed until they will no longer be ignored.
 
 ---
 
@@ -78,9 +78,9 @@ I used a Raspberry Pico with the [Noltari pico-uart-bridge](https://github.com/N
 - Raspi Pico's GPIO17 (pin 22), UART0 RX is additionally connected to the other end of the 1 kOhm resistor.
 - Another 470 Ohm resistor connects ATtiny UPDI (pin 10) with ATtiny PB2 (pin 7).
 
-Before you ask, I did attempt to use [Philip McGaw's diode based approach](https://philipmcgaw.com/build-a-updi-programmer-from-a-usb-to-uart-adaptor/) because it feels "cleaner" electrically, but couldn't make it work with the Raspi Pico. It does work with a dedicated CP2102 based USB-to-serial adapter.
+Before you ask, I did attempt to use [Philip McGaw's diode based approach](https://philipmcgaw.com/build-a-updi-programmer-from-a-usb-to-uart-adaptor/) because it feels "cleaner" electrically, but couldn't make it work with the Raspi Pico. **Update:** It does work with a dedicated CP2102 based USB-to-serial adapter that I switched to later.
 
-If (like this project) you multiplex a debug-UART TX pin so it can also serve as the UPDI programming line while the MCU sleeps, **do not disable/re-enable `USART_TXEN_bm`** around the sleep cycle. Doing so hits a real, reproducible quirk on these parts where the transmit data-register-empty flag gets stuck after TXEN is toggled off and back on, silently swallowing the first print after wake. The pin can be fully isolated for UPDI sharing using only `PORTx.DIR` (input before sleep, output after) - the USART peripheral overrides a pin's output *value* but not its *direction*, so `DIR=input` alone is sufficient isolation, and leaving TXEN permanently enabled the whole time sidesteps the quirk entirely.
+If (like this project) you multiplex a debug-UART TX pin so it can also serve as the UPDI programming line while the MCU sleeps, do not disable/re-enable `USART_TXEN_bm` around the sleep cycle. Doing so hits a real, reproducible quirk on these parts where the transmit data-register-empty flag gets stuck after TXEN is toggled off and back on, silently swallowing the first print after wake. The pin can be fully isolated for UPDI sharing using only `PORTx.DIR` (input before sleep, output after) - the USART peripheral overrides a pin's output *value* but not its *direction*, so `DIR=input` alone is sufficient isolation, and leaving TXEN permanently enabled the whole time sidesteps the quirk entirely.
 
 ---
 
@@ -266,22 +266,4 @@ How do you figure out which parts of the setup work already, and where we are st
   *actual* carrier frequency precisely, once you can receive it at all, rather than trusting a
   commonly-quoted "nominal" frequency that may (as here) turn out to not be the true carrier.
 
----
-
-## Open questions
-
-1. **OMG's exact effective OOK receive parameters are not fully understood.** Need to analyze OMG's `rtl_433_ESP.cpp` to nail down the real default-path `RegRxBw`
-   equivalent, confirm which code branch (OOK vs. FSK) is actually active by default in current
-   releases, and re-derive the tone-offset math from there rather than from partial/possibly
-   stale code excerpts.
-2. **Deviation is still an assumption, not a measured fact**, for the real WH51's TX
-   deviation specifically (as opposed to the receive-side tone-offset theory above, which is a
-   different, so-far-unconfirmed number). An SDR capture of a real sensor's transmission,
-   visually/numerically measuring the actual tone spacing on a spectrogram (e.g. with
-   `inspectrum` or Universal Radio Hacker), would settle this definitively and is the natural
-   next step.
-3. Consider whether matching OMG's specific OOK expectations is worth the effort versus
-   alternatives - e.g. a point-to-point link using your own trivial packet format with a
-   receiver you also control, if strict compatibility with OMG's existing WH51 decoder isn't a
-   hard requirement.
  

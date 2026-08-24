@@ -218,13 +218,11 @@ ISR(PORTA_PORT_vect) {
 void setup() {
   pinMode(LED_PIN, OUTPUT);
   digitalWrite(LED_PIN, HIGH);
-  delay(3000); //
+  EnableDebugOnSerialInput(3000); // Press any key in the serial program to enable logging.
   digitalWrite(LED_PIN, LOW);
   delay(100);
   pinMode(REED1_PIN, INPUT_PULLUP);
   pinMode(REED2_PIN, INPUT_PULLUP);
-
-  Check_Debug_AutoDetect();
 
   // Configure Reed Switches (PA1, PA2) - Active LOW, Both Edges
   *PINCTRL_OF(REED1_PIN) |= PORT_PULLUPEN_bm | PORT_ISC_BOTHEDGES_gc;
