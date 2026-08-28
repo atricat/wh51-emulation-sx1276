@@ -21,7 +21,7 @@ And I happened to already have WH51 moisture sensors and a gateway set up. These
 - 433 MHz and 915 MHz (SX1278 board) should work, but not tested.
 - The repeat burst separation of 36 ms may differ from the original.
 - Unknown whether reception via the official Ecowitt gateway works, I do not own it.
-- A [bug](https://github.com/1technophile/OpenMQTTGateway/issues/2356) in OpenMQTTGateway v1.8.1 prevented sending frequent updates, everything coming from the same device within 3 sec after an initial update was swallowed, even if the payload differed. Preferably, get a more recent version of OMG to avoid this problem. In the code, `MIN_UPDATE_DELAY_MS` (set to 3100 ms) provides a workaround, it causes updates to get delayed until they will no longer be ignored.
+- A [bug](https://github.com/1technophile/OpenMQTTGateway/issues/2356) in OpenMQTTGateway v1.8.1 prevented sending frequent updates, everything coming from the same device within 3 sec after an initial update was swallowed, even if the payload differed. Preferably get a more recent version of OMG to avoid this problem. In the code, `MIN_UPDATE_DELAY_MS` (set to 3100 ms) provides a workaround, it causes updates to get delayed until they will no longer be ignored.
 
 ---
 
