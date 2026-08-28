@@ -82,7 +82,11 @@ Before you ask, I did attempt to use [Philip McGaw's diode based approach](https
 
 If (like this project) you multiplex a debug-UART TX pin so it can also serve as the UPDI programming line while the MCU sleeps, do not disable/re-enable `USART_TXEN_bm` around the sleep cycle. Doing so hits a real, reproducible quirk on these parts where the transmit data-register-empty flag gets stuck after TXEN is toggled off and back on, silently swallowing the first print after wake. The pin can be fully isolated for UPDI sharing using only `PORTx.DIR` (input before sleep, output after) - the USART peripheral overrides a pin's output *value* but not its *direction*, so `DIR=input` alone is sufficient isolation, and leaving TXEN permanently enabled the whole time sidesteps the quirk entirely.
 
----
+## Assembled device
+
+![assembled device](device-sm.jpeg?raw=true)
+
+**Above:** Final setup with a simple dipole. This is just 2 pieces of solid copper wire soldered to ANT and GND. For 868 MHz, the length of each arm is 82 mm beyond the PCB, so about 83 mm including the PCB ([Half-Wave Dipole Antenna Calculator](https://rftools.io/calculators/antenna/dipole-antenna/?frequency=868.3&velocityFactor=0.95)). A surprisingly good antenna given the trivial design - better than the default coil antenna typically used with SX1276.
 
 ## SX1276 TX register configuration
 
