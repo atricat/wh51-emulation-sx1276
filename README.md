@@ -14,7 +14,7 @@ And I happened to already have WH51 moisture sensors and a gateway set up. These
 - Transmission at 868.35 MHz. The deviation of 35 kHz was measured with an SDR.
 - This shows up on my [LilyGo Lora32](https://lilygo.cc/products/lora3) (essentially an ESP32 and SX1276) running [OpenMQTTGateway](https://docs.openmqttgateway.com/), and thus also on Home Assistant.
 - Logging to the same serial port that was used for programming the ATtiny. To enable logging, you need to press a key (e.g. Enter) during the first 3 seconds of startup, while the LED is still on.
-- Reception of actual (genuine Ecowitt) WH51 transmissions, including AFC to figure out the exact frequency. (Needs a tiny bit of code hacking: Call the alternative `LoopRx()` instead of `loop()`.)
+- Reception of actual (genuine Ecowitt) WH51 transmissions, including AFC to figure out the exact frequency. (Needs a tiny bit of code hacking: Call the alternative `LoopRx()` from the start of `loop()`.)
 
 **Caveats**
 
