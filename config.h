@@ -16,8 +16,9 @@
 
 // Any state update is transmitted twice, with this delay inbetween.
 // OpenMQTTGateway considers data arriving within 150 ms (Heltec LoRa32, LilyGo LoRa32, etc.) or 40 ms (CC1101 boards) to be part of the same
-// capture, but a partially garbled 1st transmit will not prevent the 2nd one from being decoded.
-#define RETRANSMIT_DELAY_MS 36
+// capture. fineoffset_WH51_callback() will only look at the first instance of data within a capture, so use a larger value here for a chance
+// to recover from radio interference.
+#define RETRANSMIT_DELAY_MS 200
 
 #define DEBOUNCE_MS 10   // tune to your reed switch's real bounce time
 
