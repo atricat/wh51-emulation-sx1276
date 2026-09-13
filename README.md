@@ -1,5 +1,6 @@
 # wh51-emulation-sx1276
-**Emulating a WH51 Soil Moisture Sensor with an ATtiny1614 + SX1276**
+
+**Monitor your letterbox (or other device away from the house) with Home Assistant**, by emulating a WH51 Soil Moisture Sensor with an ATtiny1614 + SX1276.
 
 This is code to transmit data using an ATtiny1614 MCU and a SX1276 RFM95W module which "fakes" the signals coming from an Ecowitt (Fine Offset) moisture sensor.
 
@@ -93,7 +94,7 @@ If (like this project) you multiplex a debug-UART TX pin so it can also serve as
 
 I built two of these devices - one in the letterbox (the reed sensors monitor the flap for letters resp. the door for packages) and one on the front door (reed sensors monitor open/close state resp. unlocked/locked state).
 
-First, the two sensor templates the translate fake moisture values to open/close etc states. The third template is used in the UI to display the sticky state (maintained in a `input_text`) that there is something in the mailbox. In `configuration.yaml`:
+The first two sensor templates below translate fake moisture values to open/close etc states. The third template is used in the UI to display the sticky state (maintained in an `input_text`) that something was put in the mailbox. In `configuration.yaml`:
 
 ```
 template:
