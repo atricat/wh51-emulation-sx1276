@@ -15,6 +15,7 @@ And I happened to already have WH51 moisture sensors and a gateway set up. These
 - This shows up on my [LilyGo Lora32](https://lilygo.cc/products/lora3) (essentially an ESP32 and SX1276) running [OpenMQTTGateway](https://docs.openmqttgateway.com/), and thus also on Home Assistant.
 - Logging to the same serial port that was used for programming the ATtiny. To enable logging, you need to press a key (e.g. Enter) during the first 3 seconds of startup, while the LED is still on.
 - Reception of actual (genuine Ecowitt) WH51 transmissions, including AFC to figure out the exact frequency. (Needs a tiny bit of code hacking: Call the alternative `LoopRx()` from the start of `loop()`.)
+- Home Assistant integration (see further below): If the mailbox flap/door is opened, send a notification to my phone. However, only do this if it is not me checking the mailbox - detect this by waiting for 5 minutes before the notification, and suppress it if the front door opens during that time.
 
 **Caveats**
 
@@ -87,6 +88,141 @@ If (like this project) you multiplex a debug-UART TX pin so it can also serve as
 ![assembled device](device-sm.jpeg?raw=true)
 
 **Above:** Final setup with a simple dipole. This is just 2 pieces of solid copper wire soldered to ANT and GND. For 868 MHz, the length of each arm is 82 mm beyond the PCB, so about 83 mm including the PCB ([Half-Wave Dipole Antenna Calculator](https://rftools.io/calculators/antenna/dipole-antenna/?frequency=868.3&velocityFactor=0.95)). A surprisingly good antenna given the trivial design - better than the default coil antenna typically used with SX1276.
+
+## Home Assistant integration
+
+I built two of these devices - one in the letterbox (the reed sensors monitor the flap for letters resp. the door for packages) and one on the front door (reed sensors monitor open/close state resp. unlocked/locked state).
+
+First, the two sensor templates the translate fake moisture values to open/close etc states. The third template is used in the UI to display the sticky state (maintained in a `input_text`) that there is something in the mailbox. In `configuration.yaml`:
+
+```
+template:
+  - sensor:
+      - name: "haustuer_tpl"
+        unique_id: haustuer_tpl
+        state: >
+          {% set moisture = states('sensor.fineoffset_wh51_513c0b_moisture') %}
+          {{ {
+            '0': 'open',
+            '2': 'closed',
+            '3': 'locked'
+          }.get(moisture, 'unknown') }}
+        icon: >
+          {% set moisture = states('sensor.fineoffset_wh51_513c0b_moisture') %}
+          {{ {
+            '0': 'mdi:door-open',
+            '2': 'mdi:door-closed',
+            '3': 'mdi:door-closed-lock'
+          }.get(moisture, 'mdi:door')
+          }}
+  - sensor:
+      - name: "briefkasten_tpl"
+        unique_id: briefkasten_tpl
+        state: >
+          {% set moisture = states('sensor.fineoffset_wh51_513c2f_moisture') %}
+          {{ {
+            '0': 'Paket+Brief',
+            '1': 'Paket',
+            '2': 'Brief',
+            '3': 'closed'
+          }.get(moisture, 'unknown') }}
+        icon: >
+          {% set moisture = states('sensor.fineoffset_wh51_513c2f_moisture') %}
+          {{ {
+            '0': 'mdi:mailbox-open',
+            '1': 'mdi:mailbox-open',
+            '2': 'mdi:mailbox-open',
+            '3': 'mdi:mailbox'
+          }.get(moisture, 'mdi:mailbox')
+          }}
+  - sensor:
+      - name: briefkasten_ui
+        state: "{{ states('input_text.briefkasten') }}"
+        icon: >
+          {% if states('input_text.briefkasten') != 'leer' %}
+            mdi:mailbox-up
+          {% else %}
+            mdi:mailbox
+          {% endif %}
+```
+
+The handling of the different steps happens in one multi-choice automation: Start the `timer.briefkasten` with a 5-minute timeout if the letterbox changes, cancel it if the front door changes while it is still running, send a notification if the timer triggers. `input_text.briefkasten` doubles as a global state variable and as the "letter" vs "package" detail to put into the notification text.
+
+```
+alias: Msg Briefkasten
+description: ''
+triggers:
+  - trigger: state
+    entity_id: sensor.briefkasten_tpl
+    id: briefkasten
+  - trigger: state
+    entity_id: sensor.haustuer_tpl
+    id: haustuer
+  - trigger: timer.finished
+    target:
+      entity_id: timer.briefkasten
+    options:
+      behavior: each
+      for: '00:00:00'
+    id: timer
+conditions: []
+actions:
+  - choose:
+      - conditions:
+          - condition: trigger
+            id:
+              - briefkasten
+          - condition: state
+            entity_id: sensor.briefkasten_tpl
+            state:
+              - Paket
+              - Brief
+              - Paket+Brief
+        sequence:
+          - action: timer.start
+            metadata: {}
+            target:
+              entity_id: timer.briefkasten
+            data:
+              duration:
+                hours: 0
+                minutes: 5
+                seconds: 0
+          - action: input_text.set_value
+            metadata: {}
+            target:
+              entity_id: input_text.briefkasten
+            data:
+              value: '{{ states(''sensor.briefkasten_tpl'') }}'
+        alias: 'briefkasten: start timer'
+      - conditions:
+          - condition: trigger
+            id:
+              - haustuer
+        sequence:
+          - action: timer.cancel
+            metadata: {}
+            target:
+              entity_id: timer.briefkasten
+            data: {}
+          - action: input_text.set_value
+            metadata: {}
+            target:
+              entity_id: input_text.briefkasten
+            data:
+              value: leer
+        alias: 'haustuer: cancel timer'
+      - conditions:
+          - condition: trigger
+            id:
+              - timer
+        sequence:
+          - action: notify.notify
+            metadata: {}
+            data:
+              message: 'Briefkasten: {{ states(''input_text.briefkasten'') }}'
+mode: single
+```
 
 ## SX1276 TX register configuration
 
