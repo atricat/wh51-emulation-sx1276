@@ -1,12 +1,12 @@
 # wh51-emulation-sx1276
 
-**Monitor your letterbox (or other device away from the house) with Home Assistant**, by emulating a WH51 Soil Moisture Sensor with an ATtiny1614 + SX1276.
+**Monitor your letterbox (or other device away from the house) with Home Assistant.**
 
-This is code to transmit data using an ATtiny1614 MCU and a SX1276 RFM95W module which "fakes" the signals coming from an Ecowitt (Fine Offset) moisture sensor.
+This is code to emulate a WH51 soil moisture sensor with an ATtiny1614 MCU and a SX1276 (RFM95W) module. It transmits data that "fakes" the signals coming from an Ecowitt (Fine Offset) moisture sensor.
 
 **Why would you need this?**
 
-I needed a long-range, low-power (i.e. non 2.4GHz Wifi/Zigbee) battery-powered way to transmit sensor data to Home Assistant.
+I needed a **long-range**, low-power (i.e. non 2.4GHz Wifi/Zigbee) **battery-powered** way to transmit sensor data to Home Assistant.
 And I happened to already have WH51 moisture sensors and a gateway set up. These sensors use FSK modulation, and the SX1276 in the gateway can only listen either in FSK mode _or_ simple OOK/ASK mode. So it seemed easier to just "quickly" set something up to transmit using FSK. How naive... but I eventually got it to work.
 
 
@@ -20,6 +20,7 @@ And I happened to already have WH51 moisture sensors and a gateway set up. These
 
 **Caveats**
 
+- For battery operation, note that the ATtiny will work from 1.8V at 5 MHz clock speed, from 2.7V at 10 MHz. So for best battery life, choose 5 MHz when compiling!
 - 433 MHz and 915 MHz (SX1278 board) should work, but not tested.
 - The repeat burst separation of 36 ms may differ from the original.
 - Unknown whether reception via the official Ecowitt gateway works, I do not own it.
@@ -38,20 +39,21 @@ And I happened to already have WH51 moisture sensors and a gateway set up. These
 ### Pin numbering
 
 This is specific to the ATtiny1614 - take care to adapt as necessary for other MCUs.
-[ATtiny1614/1616/1617 Data Sheet](https://ww1.microchip.com/downloads/aemDocuments/documents/MCU08/ProductDocuments/DataSheets/ATtiny1614-16-17-DataSheet-DS40002204A.pdf).
+[ATtiny1614/1616/1617 data sheet](https://ww1.microchip.com/downloads/aemDocuments/documents/MCU08/ProductDocuments/DataSheets/ATtiny1614-16-17-DataSheet-DS40002204A.pdf),
+[SX1276 data sheet](https://www.semtech.com/products/wireless-rf/lora-connect/sx1276).
 
 ![pinout](attiny1614-pinout.png?raw=true)
 
 | Physical pin | Name | Purpose |
 |--------------|------|---------|
-|       1      | VDD  | 3.3V - not 5V, the SX1276 does not like that |
+|       1      | VDD  | 1.8V (at 5 MHz) to 3.3V - not 5V, the SX1276 does not like that |
 |       2      | PA4  | SX1276 NSS/CS |
 |       3      | PA5  | Reed 1 connected to GND |
 |       4      | PA6  | Reed 2 connected to GND |
 |       5      | PA7  | unused |
 |       6      | PB3  | unused |
 |       7      | PB2  | Serial output for log messages, see below |
-|       8      | PB1  | Status LED connected to GND via ~330 Ohm |
+|       8      | PB1  | Status LED connected to GND via ~330 Ohm (assuming a red LED) |
 |       9      | PB0  | unused |
 |      10      | PA0  | UPDI flashing |
 |      11      | PA1  | SX1276 MOSI   |
@@ -61,6 +63,7 @@ This is specific to the ATtiny1614 - take care to adapt as necessary for other M
 
 The unused pins could of course be used for more analog or digital inputs.
 
+_Implementation notes:_
 I always use the named constants (`PIN_PA1`, `PIN_PB2`, etc.) rather than bare numbers to avoid confusion. This project got bitten by this repeatedly before switching to named constants everywhere.
 
 Related, more general issue that applies beyond just this MCU: Raw AVR/megaAVR-0 registers expect different *kinds* of values depending on which register you're touching, and mixing
@@ -69,9 +72,9 @@ them up compiles fine but silently does the wrong thing:
 - `PORTx.PINnCTRL` access wants a **bit position** (`digitalPinToBitPosition(pin)`)
 - Arduino API calls (`pinMode`, `digitalRead`, `digitalWrite`) want the **Arduino pin number**
 
-This project's ISR originally wrote `PORTA.INTFLAGS = REED1_PIN | REED2_PIN` using Arduino pin *numbers* where a *bitmask* was required - this cleared the wrong bits, leaving the real interrupt flag permanently set, causing an infinite interrupt-retrigger lockup the instant a reed switch changed state. Worth being paranoid about this distinction in any register-level AVR code.
-
 ### Serial/UPDI setup
+
+**Raspberry Pico**
 
 I used a Raspberry Pico with the [Noltari pico-uart-bridge](https://github.com/Noltari/pico-uart-bridge). With a simple setup with two resistors (however took a while to figure out the correct values), one can use the same cable to first program the ATtiny at 230400 baud, then read the output coming back at 9600 baud, e.g. using `minicom -D /dev/ttyACM0 -b 9600` (software/hardware flow control off!).
 
@@ -80,9 +83,14 @@ I used a Raspberry Pico with the [Noltari pico-uart-bridge](https://github.com/N
 - Raspi Pico's GPIO17 (pin 22), UART0 RX is additionally connected to the other end of the 1 kOhm resistor.
 - Another 470 Ohm resistor connects ATtiny UPDI (pin 10) with ATtiny PB2 (pin 7).
 
-Before you ask, I did attempt to use [Philip McGaw's diode based approach](https://philipmcgaw.com/build-a-updi-programmer-from-a-usb-to-uart-adaptor/) because it feels "cleaner" electrically, but couldn't make it work with the Raspi Pico. **Update:** It does work with a dedicated CP2102 based USB-to-serial adapter that I switched to later.
+**CP2102 serial adapter**
 
-If (like this project) you multiplex a debug-UART TX pin so it can also serve as the UPDI programming line while the MCU sleeps, do not disable/re-enable `USART_TXEN_bm` around the sleep cycle. Doing so hits a real, reproducible quirk on these parts where the transmit data-register-empty flag gets stuck after TXEN is toggled off and back on, silently swallowing the first print after wake. The pin can be fully isolated for UPDI sharing using only `PORTx.DIR` (input before sleep, output after) - the USART peripheral overrides a pin's output *value* but not its *direction*, so `DIR=input` alone is sufficient isolation, and leaving TXEN permanently enabled the whole time sidesteps the quirk entirely.
+A maybe nicer alternative to the above is to use [Philip McGaw's diode based approach](https://philipmcgaw.com/build-a-updi-programmer-from-a-usb-to-uart-adaptor/), it is an electrically "cleaner" design which possibly also allows higher baud rates for programming the ATtiny.
+
+As above, to enable the logging feature, use a 470 Ohm resistor to connect ATtiny UPDI (pin 10) with ATtiny PB2 (pin 7).
+
+_Implementation note:_
+If (like this project) you multiplex a debug-UART TX pin so it can also serve as the UPDI programming line while the MCU sleeps, do not disable/re-enable `USART_TXEN_bm` around the sleep cycle. Doing so hits a quirk on these parts where the transmit data-register-empty flag gets stuck after TXEN is toggled off and back on, silently swallowing the first print after wake. The pin can be fully isolated for UPDI sharing using only `PORTx.DIR` (input before sleep, output after) - the USART peripheral overrides a pin's output *value* but not its *direction*, so `DIR=input` alone is sufficient isolation, and leaving TXEN permanently enabled the whole time sidesteps the quirk entirely.
 
 ## Assembled device
 
@@ -344,7 +352,7 @@ Note that register changes alone are not sufficient - most SX127x breakout board
 
 ---
 
-## OMG's actual receive architecture
+## OMG's receive architecture
 
 _This section courtesy of Claude who also helped figure out much of the above. But ChatGPT produced a similar theory._
 
@@ -376,7 +384,7 @@ hypothesized to approximate the real transmitter's deviation.
 
 ---
 
-## Diagnostic techniques that proved valuable (reusable for similar projects)
+## Diagnostic techniques that proved valuable
 
 How do you figure out which parts of the setup work already, and where we are stuck?
 
