@@ -22,7 +22,6 @@ And I happened to already have WH51 moisture sensors and a gateway set up. These
 
 - For battery operation, note that the ATtiny will work from 1.8V at 5 MHz clock speed, from 2.7V at 10 MHz. So for best battery life, choose 5 MHz when compiling!
 - 433 MHz and 915 MHz (SX1278 board) should work, but not tested.
-- The repeat burst separation of 36 ms may differ from the original.
 - Unknown whether reception via the official Ecowitt gateway works, I do not own it.
 - A [bug](https://github.com/1technophile/OpenMQTTGateway/issues/2356) in OpenMQTTGateway v1.8.1 prevented sending frequent updates, everything coming from the same device within 3 sec after an initial update was swallowed, even if the payload differed. Preferably get a more recent version of OMG to avoid this problem. In the code, `MIN_UPDATE_DELAY_MS` (set to 3100 ms) provides a workaround, it causes updates to get delayed until they will no longer be ignored.
 - Another problem in OpenMQTTGateway affects retransmits to recover from temporary radio interference: We must wait >150 ms before the retransmit, otherwise the second transmit is considered part of the same capture, but OpenMQTTGateway's code only performs one WH51 decoding attempt per capture.
