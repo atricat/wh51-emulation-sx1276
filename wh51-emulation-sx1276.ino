@@ -179,7 +179,7 @@ void SendPacket(uint8_t current_reed_state) {
   SX1276_WaitForTxDone(50);
 
   // Re-transmit in case the receiver didn't catch the first transmission.
-  SleepMsec(36);
+  SleepMsec(RETRANSMIT_DELAY_MS);
   SX1276_SendPacket(payload, out);
   SX1276_WaitForTxDone(50);
   SX1276_Sleep();

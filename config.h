@@ -14,6 +14,11 @@
 #define RADIO_FREQUENCY_HZ   868350000UL
 //                           MMMkkk000UL
 
+// Any state update is transmitted twice, with this delay inbetween.
+// OpenMQTTGateway considers data arriving within 150 ms (Heltec LoRa32, LilyGo LoRa32, etc.) or 40 ms (CC1101 boards) to be part of the same
+// capture, but a partially garbled 1st transmit will not prevent the 2nd one from being decoded.
+#define RETRANSMIT_DELAY_MS 36
+
 #define DEBOUNCE_MS 10   // tune to your reed switch's real bounce time
 
 // Power transmission output from minimum 0 (+2 dBm) to maximum 15 (+17 dBm).
