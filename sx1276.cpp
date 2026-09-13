@@ -128,7 +128,7 @@ void SX1276_Sleep() {
 }
 
 // Bitmask to select low-frequency (433 MHz) mode when writing to REG_OP_MODE.
-#define OP_MODE_LOW_FREQ (RADIO_FREQUENCY_HZ < 600000000UL ? 0x80 : 0x00)
+#define OP_MODE_LOW_FREQ (RADIO_FREQUENCY_HZ < 600000000UL ? 0x8 : 0x0)
 
 void SX1276_Standby(){
     // Force the radio into Standby mode to clear FIFO frame pointers.
