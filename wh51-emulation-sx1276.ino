@@ -173,16 +173,14 @@ void SendPacket(uint8_t current_reed_state) {
     LOG("\n");
   }
 
-  // Transmit the data.
-  SX1276_Standby();
-  SX1276_SendPacket(payload, out);
-  SX1276_WaitForTxDone(50);
-
-  // Re-transmit in case the receiver didn't catch the first transmission.
-  SX1276_Standby(); // Required to clear PacketSent
-  SleepMsec(RETRANSMIT_DELAY_MS);
-  SX1276_SendPacket(payload, out);
-  SX1276_WaitForTxDone(50);
+  // Send data twice. In case transmission fails, retry up to a total 4 times.
+  int sent_count = 0;
+  for (int retry = 0; retry < 4; ++retry) {
+    SX1276_Standby(); // Required in each loop iteration to clear PacketSent
+    if (retry > 0) SleepMsec(RETRANSMIT_DELAY_MS);
+    SX1276_SendPacket(payload, out);
+    if (SX1276_WaitForTxDone(50) && ++sent_count >= 2) break;
+  }
   SX1276_Sleep();
 }
 
