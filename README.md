@@ -9,6 +9,10 @@ This is code to emulate a WH51 soil moisture sensor with an ATtiny1614 MCU and a
 I needed a **long-range**, low-power (i.e. non 2.4GHz Wifi/Zigbee) **battery-powered** way to transmit sensor data to Home Assistant.
 And I happened to already have WH51 moisture sensors and a gateway set up. These sensors use FSK modulation, and the SX1276 in the gateway can only listen either in FSK mode _or_ simple OOK/ASK mode. So it seemed easier to just "quickly" set something up to transmit using FSK. How naive... but I eventually got it to work.
 
+**Alternative: ESPHome**
+
+Before building this, double-check if the [ESPHome SX127x component](https://esphome.io/components/sx127x/) is suitable for your case. One can set up multiple such ESPHome nodes, with one of them acting as a gateway into the Wi-Fi with Home Assistant. Less coding, longer range if using LoRa, _but_ worse battery performance and you need another dedicated gateway running, instead of the one that already runs for the moisture sensors. Rough guide: [ESP32 LoRa Remote Sensor Node](https://esp32.co.uk/esp32-lora-remote-sensor-node-for-home-assistant-sx1276/).
+
 
 **What works**
 
