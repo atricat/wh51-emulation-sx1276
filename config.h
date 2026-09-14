@@ -30,4 +30,4 @@
 
 // When using OpenMQTTGateway versions that suffer from bug https://github.com/1technophile/OpenMQTTGateway/issues/2356,
 // ensure that sensor updates are at least 3 sec apart from one another, else they can get ignored.
-#define MIN_UPDATE_DELAY_MS 4000
+#define MIN_UPDATE_DELAY_MS 3500

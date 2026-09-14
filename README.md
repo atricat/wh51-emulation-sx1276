@@ -9,9 +9,7 @@ This is code to emulate a WH51 soil moisture sensor with an ATtiny1614 MCU and a
 I needed a **long-range**, low-power (i.e. non 2.4GHz Wifi/Zigbee) **battery-powered** way to transmit sensor data to Home Assistant.
 And I happened to already have WH51 moisture sensors and a gateway set up. These sensors use FSK modulation, and the SX1276 in the gateway can only listen either in FSK mode _or_ simple OOK/ASK mode. So it seemed easier to just "quickly" set something up to transmit using FSK. How naive... but I eventually got it to work.
 
-**Alternative: ESPHome**
-
-Before building this, double-check if the [ESPHome SX127x component](https://esphome.io/components/sx127x/) is suitable for your case. One can set up multiple such ESPHome nodes, with one of them acting as a gateway into the Wi-Fi with Home Assistant. Less coding, longer range if using LoRa, _but_ worse battery performance and you need another dedicated gateway running, instead of the one that already runs for the moisture sensors. Rough guide: [ESP32 LoRa Remote Sensor Node](https://esp32.co.uk/esp32-lora-remote-sensor-node-for-home-assistant-sx1276/).
+**Alternative: ESPHome**: The [ESPHome SX127x component](https://esphome.io/components/sx127x/) potentially allows a similar setup: In a setup with multiple such SX127x ESPHome nodes, one of them acts as a gateway to Wi-Fi for Home Assistant, forwarding sensor data from the othres. Less coding, longer range if using LoRa, _but_ worse battery performance due to the use of ESP32, and you need another dedicated gateway running, instead of the one for the moisture sensors. Only little documentation exists, e.g. see [ESP32 LoRa Remote Sensor Node](https://esp32.co.uk/esp32-lora-remote-sensor-node-for-home-assistant-sx1276/).
 
 
 **What works**
@@ -27,7 +25,7 @@ Before building this, double-check if the [ESPHome SX127x component](https://esp
 - For battery operation, note that the ATtiny will work from 1.8V at 5 MHz clock speed, from 2.7V at 10 MHz. So for best battery life, choose 5 MHz when compiling!
 - 433 MHz and 915 MHz (SX1278 board) should work, but not tested.
 - Unknown whether reception via the official Ecowitt gateway works, I do not own it.
-- A [bug](https://github.com/1technophile/OpenMQTTGateway/issues/2356) in OpenMQTTGateway v1.8.1 prevented sending frequent updates, everything coming from the same device within 3 sec after an initial update was swallowed, even if the payload differed. Preferably get a more recent version of OMG to avoid this problem. In the code, `MIN_UPDATE_DELAY_MS` (set to 4000 ms to have some safety margin) provides a workaround, it causes updates to get delayed until they will no longer be ignored.
+- A [bug](https://github.com/1technophile/OpenMQTTGateway/issues/2356) in OpenMQTTGateway v1.8.1 prevented sending frequent updates, everything coming in from **any** device within 3 sec after an initial update was swallowed, even if the payload differed. It is **strongly recommended** to get a more recent version of OMG to avoid this problem. In the code, `MIN_UPDATE_DELAY_MS` (set to 3500 ms) provides a workaround, it causes updates of our device to get delayed until they will no longer be ignored. However, collisions with other devices within the 3 seconds cannot be avoided.
 - Another problem in OpenMQTTGateway affects retransmits to recover from temporary radio interference: We must wait >150 ms before the retransmit, otherwise the second transmit is considered part of the same capture, but OpenMQTTGateway's code only performs one WH51 decoding attempt per capture.
 
 ---
