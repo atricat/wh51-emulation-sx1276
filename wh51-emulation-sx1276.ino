@@ -54,39 +54,69 @@ void SleepMsec(uint16_t ms) {
   Active();
 }
 
-// Deep sleep, also stops millis().
-void DeepSleepAllowUdpi() {
-  Inactive();
-  if (!debug_enabled) {
-    SLPCTRL.CTRLA = SLPCTRL_SMODE_PDOWN_gc | SLPCTRL_SEN_bm;
-    sleep_cpu();
-    SLPCTRL.CTRLA &= ~SLPCTRL_SEN_bm;
-    Active();
-    return;
-  }
+volatile uint16_t isr_event_id = 0;
+volatile uint16_t handled_event_id = 0;
 
-  LOG("[DEEP SLEEP]\n");
-  uint16_t timeout = 20000; // ~200ms — plenty even for long lines at low baud, still a rare one-off cost
-  while (!(USART0.STATUS & USART_TXCIF_bm) && --timeout) {
-    _delay_us(10);
-  }
-  USART0.STATUS = USART_TXCIF_bm;
+// Interrupt service routine.
+ISR(PORTA_PORT_vect) {
+  // Wake the CPU - main state checking logic lives in the main loop.
+  PORTA.INTFLAGS = digitalPinToBitMask(REED1_PIN) | digitalPinToBitMask(REED2_PIN);
 
-  // Prepare for sleep. Do NOT touch TXEN, leave it enabled to avoid wakeup UART problem.
-  // Actually don't do this, causes the serial-to-USB to drop last characters. We will assume that
-  // enabled debug logging means we do not need to save power.
-  _delay_ms(4); // let the line sit idle-high before releasing the pin
-  PORTB.DIRCLR = DEBUG_TX_PIN;
-  PORTB.PIN2CTRL = 0;
+  // Avoid the following fairly likely race condition:
+  // 1) Main loop calls DebounceReedState(), decides to sleep forever.
+  // 2) Another reed change, this ISR gets called.
+  // 3) After lengthy debug printing etc., DeepSleepAllowUdpi() just goes to sleep.
+  ++isr_event_id;
 
-  SLPCTRL.CTRLA = SLPCTRL_SMODE_PDOWN_gc | SLPCTRL_SEN_bm;
-  sleep_cpu();
+  // Avoid the following very unlikely race condition:
+  // 1) Main loop calls DebounceReedState(), decides to sleep forever.
+  // 2) DeepSleepAllowUdpi() confirms in its cli()-protected isr_event_id check that we
+  //    should sleep, arms the sleep, then calls sei() just before sleeping.
+  // 3) This ISR gets called after the sei(), before the actual sleep. Disarm the sleep again:
   SLPCTRL.CTRLA &= ~SLPCTRL_SEN_bm;
+}
 
-  // Post-wakeup init and UPDI halt window.
-  delay(10);
-  PORTB.DIRSET = DEBUG_TX_PIN; // TXEN was never disabled - nothing else to restore
+// Deep sleep until woken by GPIO, also stops millis().
+// Will not go to sleep and return immediately if another GPIO change occurred since the last
+// atomic check here or in ReadReedState(). Returns true if it did not sleep.
+bool DeepSleepAllowUdpi() {
+  Inactive();
+
+  if (debug_enabled) {
+    LOG("[DEEP SLEEP]");
+    uint16_t timeout = 20000; // ~200ms — plenty even for long lines at low baud, still a rare one-off cost
+    while (!(USART0.STATUS & USART_TXCIF_bm) && --timeout) {
+      _delay_us(10);
+    }
+    USART0.STATUS = USART_TXCIF_bm;
+    // Prepare for sleep. Do NOT touch TXEN, leave it enabled to avoid wakeup UART problem,
+    // causes the serial-to-USB to drop last characters. We will assume that
+    // enabled debug logging means we do not need to save power.
+    _delay_ms(4); // let the line sit idle-high before releasing the pin
+    PORTB.DIRCLR = DEBUG_TX_PIN;
+    PORTB.PIN2CTRL = 0;
+  }
+
+  cli();
+  bool should_sleep = handled_event_id == isr_event_id;
+  if (should_sleep) {
+    SLPCTRL.CTRLA = SLPCTRL_SMODE_PDOWN_gc | SLPCTRL_SEN_bm;
+    sei();
+    // Race handled if GPIO event happens now - ISR will disable sleep.
+    sleep_cpu();
+  } else {
+    handled_event_id = isr_event_id;
+    sei();
+  }
+
+  if (debug_enabled) {
+    // Post-wakeup init and UPDI halt window.
+    delay(10);
+    PORTB.DIRSET = DEBUG_TX_PIN; // TXEN was never disabled - nothing else to restore
+    LOG(should_sleep ? "\n" : " - skipped\n");
+  }
   Active();
+  return !should_sleep;
 }
 
 uint8_t ChecksumAdd(const uint8_t *data, uint8_t len) {
@@ -186,8 +216,12 @@ void SendPacket(uint8_t current_reed_state) {
 
 static inline uint8_t ReadReedState(void) {
   uint8_t state = 0;
+  cli();
   if (digitalRead(REED1_PIN) == LOW) state |= 0x01;
   if (digitalRead(REED2_PIN) == LOW) state |= 0x02;
+  // Ensure that DeepSleepAllowUdpi() will sleep even if the reed bounces.
+  handled_event_id = isr_event_id;
+  sei();
   return state;
 }
 
@@ -206,12 +240,6 @@ uint8_t DebounceReedState() {
     }
   }
   return last_sample;
-}
-
-// Interrupt service routine.
-ISR(PORTA_PORT_vect) {
-  // Just wake the CPU - all state logic lives in the main loop.
-  PORTA.INTFLAGS = digitalPinToBitMask(REED1_PIN) | digitalPinToBitMask(REED2_PIN);
 }
 
 void setup() {
