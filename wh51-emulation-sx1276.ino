@@ -185,8 +185,10 @@ void SendPacket(uint8_t current_reed_state) {
   // 0 = both open, 1 = one closed, 2 = other closed, 3 = both closed.
   *out++ = current_reed_state;
 
-  uint16_t ad_raw = 56 + 10 * current_reed_state; // no real AD value - just make something up.
-  *out++ = 0xF8 | ((ad_raw >> 8) & 0x01);
+  // Keep changing ad_raw to prevent OpenMQTTGateway's deduping from swallowing the transmission
+  // in case of a quick "reed open/close/open" within its 3-second window.
+  static uint16_t ad_raw = 55;
+  *out++ = 0xF8 | ((++ad_raw >> 8) & 0x01);
   *out++ = ad_raw & 0xFF;
 
   *out++ = 0xFF;
