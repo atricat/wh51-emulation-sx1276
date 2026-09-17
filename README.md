@@ -14,7 +14,7 @@ And I happened to already have WH51 moisture sensors and a gateway set up. These
 
 **What works**
 
-- Transmission at 868.35 MHz. The deviation of 35 kHz was measured with an SDR.
+- Transmission at 868.35 MHz. The deviation of 35 kHz was measured with an SDR. Re-transmits after 5/10/60/300 seconds before going silent again, to ensure a new state goes through in case of e.g. radio interference.
 - This shows up on my [LilyGo Lora32](https://lilygo.cc/products/lora3) (essentially an ESP32 and SX1276) running [OpenMQTTGateway](https://docs.openmqttgateway.com/), and thus also on Home Assistant.
 - Logging to the same serial port that was used for programming the ATtiny. To enable logging, you need to press a key (e.g. Enter) during the first 3 seconds of startup, while the LED is still on.
 - Reception of actual (genuine Ecowitt) WH51 transmissions, including AFC to figure out the exact frequency. (Needs a tiny bit of code hacking: Call the alternative `LoopRx()` from the start of `loop()`.)
@@ -26,7 +26,6 @@ And I happened to already have WH51 moisture sensors and a gateway set up. These
 - 433 MHz and 915 MHz (SX1278 board) should work, but not tested.
 - Unknown whether reception via the official Ecowitt gateway works, I do not own it.
 - A [bug](https://github.com/1technophile/OpenMQTTGateway/issues/2356) in OpenMQTTGateway v1.8.1 prevented sending frequent updates, everything coming in from **any** device within 3 sec after an initial update was swallowed, even if the payload differed. It is **strongly recommended** to get a more recent version of OMG to avoid this problem. In the code, `MIN_UPDATE_DELAY_MS` (set to 3500 ms) provides a workaround, it causes updates of our device to get delayed until they will no longer be ignored. However, collisions with other devices within the 3 seconds cannot be avoided.
-- Another problem in OpenMQTTGateway affects retransmits to recover from temporary radio interference: We must wait >150 ms before the retransmit, otherwise the second transmit is considered part of the same capture, but OpenMQTTGateway's code only performs one WH51 decoding attempt per capture.
 
 ---
 

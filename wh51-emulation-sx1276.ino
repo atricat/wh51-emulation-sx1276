@@ -76,14 +76,18 @@ ISR(PORTA_PORT_vect) {
   SLPCTRL.CTRLA &= ~SLPCTRL_SEN_bm;
 }
 
-// Deep sleep until woken by GPIO, also stops millis().
+ISR(RTC_PIT_vect) {
+  RTC.PITINTFLAGS = RTC_PI_bm;
+}
+
+// Deep sleep until woken by GPIO or for given period, whichever is shorter. Stops millis().
 // Will not go to sleep and return immediately if another GPIO change occurred since the last
-// atomic check here or in ReadReedState(). Returns true if it did not sleep.
-bool DeepSleepAllowUdpi() {
+// atomic check here or in ReadReedState(). Returns true if it did not sleep at all.
+bool DeepSleepAllowUdpi(uint16_t seconds) {
   Inactive();
 
   if (debug_enabled) {
-    LOG("[DEEP SLEEP]");
+    if (seconds == 0)LOG("[DEEP SLEEP]"); else LOG("[DEEP SLEEP %ds]", seconds);
     uint16_t timeout = 20000; // ~200ms — plenty even for long lines at low baud, still a rare one-off cost
     while (!(USART0.STATUS & USART_TXCIF_bm) && --timeout) {
       _delay_us(10);
@@ -97,16 +101,30 @@ bool DeepSleepAllowUdpi() {
     PORTB.PIN2CTRL = 0;
   }
 
-  cli();
-  bool should_sleep = handled_event_id == isr_event_id;
-  if (should_sleep) {
-    SLPCTRL.CTRLA = SLPCTRL_SMODE_PDOWN_gc | SLPCTRL_SEN_bm;
-    sei();
-    // Race handled if GPIO event happens now - ISR will disable sleep.
-    sleep_cpu();
-  } else {
-    handled_event_id = isr_event_id;
-    sei();
+  if (seconds > 0) {
+    //  Enable PIT timer which wakes us every second.
+    RTC.PITINTFLAGS = RTC_PI_bm; // Clear stale flag
+    RTC.PITINTCTRL = RTC_PI_bm; // Enable PIT interrupt
+    while (RTC.PITSTATUS & RTC_CTRLBUSY_bm) ;
+    RTC.PITCTRLA = RTC_PERIOD_CYC32768_gc | RTC_PITEN_bm; // Start
+  }
+
+  bool should_sleep = true;
+  // This loop /should/ run once for seconds==0 and once for seconds==1, then twice for seconds==2 etc.
+  // In practice we run it twice for seconds==1 already because the first timer interrupt is anyway
+  // arbitrarily after 0..1 seconds, so we have up to 1 sec safety margin.
+  for (uint16_t elapsed_seconds = 0; elapsed_seconds <= seconds && should_sleep; ++elapsed_seconds) {
+    cli();
+    should_sleep = handled_event_id == isr_event_id;
+    if (should_sleep) {
+      SLPCTRL.CTRLA = SLPCTRL_SMODE_PDOWN_gc | SLPCTRL_SEN_bm;
+      sei();
+      // Race handled if GPIO event happens now - ISR will disable sleep.
+      sleep_cpu();
+    } else {
+      handled_event_id = isr_event_id;
+      sei();
+    }
   }
 
   if (debug_enabled) {
@@ -115,6 +133,13 @@ bool DeepSleepAllowUdpi() {
     PORTB.DIRSET = DEBUG_TX_PIN; // TXEN was never disabled - nothing else to restore
     LOG(should_sleep ? "\n" : " - skipped\n");
   }
+
+  // Disable periodic 1 sec timer interrupts.
+  RTC.PITINTCTRL = 0;
+  while (RTC.PITSTATUS & RTC_CTRLBUSY_bm) ;
+  RTC.PITCTRLA = 0;
+  RTC.PITINTFLAGS = RTC_PI_bm;
+
   Active();
   return !should_sleep;
 }
@@ -187,8 +212,8 @@ void SendPacket(uint8_t current_reed_state) {
 
   // Keep changing ad_raw to prevent OpenMQTTGateway's deduping from swallowing the transmission
   // in case of a quick "reed open/close/open" within its 3-second window.
-  static uint16_t ad_raw = 55;
-  *out++ = 0xF8 | ((++ad_raw >> 8) & 0x01);
+  uint16_t ad_raw = handled_event_id;
+  *out++ = 0xF8 | ((ad_raw >> 8) & 0x01);
   *out++ = ad_raw & 0xFF;
 
   *out++ = 0xFF;
@@ -205,13 +230,13 @@ void SendPacket(uint8_t current_reed_state) {
     LOG("\n");
   }
 
-  // Send data twice. In case transmission fails, retry up to a total 4 times.
+  // Send data once. In case transmission fails, retry up to a total 4 times.
   int sent_count = 0;
   for (int retry = 0; retry < 4; ++retry) {
     SX1276_Standby(); // Required in each loop iteration to clear PacketSent
     if (retry > 0) SleepMsec(RETRANSMIT_DELAY_MS);
     SX1276_SendPacket(payload, out);
-    if (SX1276_WaitForTxDone(50) && ++sent_count >= 2) break;
+    if (SX1276_WaitForTxDone(50) && ++sent_count >= 1) break;
   }
   SX1276_Sleep();
 }
@@ -276,17 +301,33 @@ void loop(void) {
   // LoopRx(); // Uncomment to listen to genuine WH51 sensors.
   sei();
   uint8_t last_reported_state = 0xff; // Always send state on startup.
+  uint16_t seconds = 0;
 
   while (true) {
     uint8_t settled_state = DebounceReedState();
-    if (settled_state == last_reported_state) {
-      if (debug_enabled) _delay_ms(10); // Let UART finish printing
-      DeepSleepAllowUdpi(); // Sleeps until any reed edge wakes it
-    } else {
+
+    if (settled_state != last_reported_state) {
       LOG("[WAKE] State: %02x\n", settled_state);
+      seconds = 5;
       SendPacket(settled_state);
+      // Unconditional sleep here for rate-limiting in case of many reed changes.
+      // Otherwise, DeepSleepAllowUdpi() will always get interrupted by another GPIO event.
       SleepMsec(MIN_UPDATE_DELAY_MS);
       last_reported_state = settled_state;
+    } else {
+      LOG("[RETRANSMIT] State: %02x\n", settled_state);
+      SendPacket(settled_state);
+      switch (seconds) {
+        case 5: seconds = 10; break;
+        case 10: seconds = 60; break;
+        case 60: seconds = 300; break;
+        default: seconds = 0; break;
+      }
     }
+    if (debug_enabled) _delay_ms(10); // Let UART finish printing
+    // Sleeps until any reed edge wakes it, or after some seconds.
+    // In case it returns early, ensure that we take the WAKE branch above, as settled_state
+    // may ultimately NOT change after debouncing, and then we'd cycle through the many retries too quickly.
+    if (DeepSleepAllowUdpi(seconds)) last_reported_state = 0xff;
   }
 }
