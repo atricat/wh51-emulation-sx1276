@@ -203,7 +203,11 @@ actions:
             target:
               entity_id: input_text.briefkasten
             data:
-              value: '{{ states(''sensor.briefkasten_tpl'') }}'
+              value: |
+                {% set known = ['Paket', 'Brief'] %}
+                {% set seen = (states('input_text.briefkasten').split('+')
+                             + states('sensor.briefkasten_tpl').split('+')) %}
+                {{ known | select('in', seen) | join('+') }}
         alias: 'briefkasten: start timer'
       - conditions:
           - condition: trigger
