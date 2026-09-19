@@ -236,7 +236,7 @@ void SendPacket(uint8_t current_reed_state) {
     SX1276_Standby(); // Required in each loop iteration to clear PacketSent
     if (retry > 0) SleepMsec(RETRANSMIT_DELAY_MS);
     SX1276_SendPacket(payload, out);
-    if (SX1276_WaitForTxDone(50) && ++sent_count >= 1) break;
+    if (SX1276_WaitForTxDone(50) && ++sent_count >= 2) break;
   }
   SX1276_Sleep();
 }
